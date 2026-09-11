@@ -525,7 +525,9 @@ def calculate_ticket_score(
 
     game_quality = calculate_game_score(game)
 
-        price_score = calculate_price_score(
+            game_quality = calculate_game_score(game)
+
+    price_score = calculate_price_score(
         price,
         [
             float(t.get("price", 0))
