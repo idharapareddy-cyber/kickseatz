@@ -83,6 +83,27 @@ MASTER_DATA_PATH = find_file(
 # ============================================================
 
 st.markdown("""
+/* Remove unwanted default Streamlit white boxes/borders */
+[data-testid="stVerticalBlockBorderWrapper"],
+[data-testid="stVerticalBlockBorderWrapper"] > div,
+[data-testid="stHorizontalBlock"],
+[data-testid="stColumn"],
+[data-testid="stElementContainer"] {
+    background: transparent !important;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* Remove empty wrapper spacing */
+[data-testid="stVerticalBlockBorderWrapper"]:empty,
+[data-testid="stElementContainer"]:empty {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
 <style>
 .main {
     background: #f7f8fa;
