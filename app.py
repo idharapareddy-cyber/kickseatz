@@ -83,7 +83,7 @@ MASTER_DATA_PATH = find_file(
 # ============================================================
 
 st.markdown("""
-/* Remove unwanted default Streamlit white boxes/borders */
+/* REMOVE DEFAULT STREAMLIT WHITE BOXES */
 [data-testid="stVerticalBlockBorderWrapper"],
 [data-testid="stVerticalBlockBorderWrapper"] > div,
 [data-testid="stHorizontalBlock"],
@@ -95,7 +95,27 @@ st.markdown("""
     box-shadow: none !important;
 }
 
-/* Remove empty wrapper spacing */
+/* REMOVE WHITE/LIGHT CUSTOM CARDS */
+.recommendation-card,
+.compare-card,
+.budget-box,
+.rate-card,
+.reason-card,
+.deal-answer {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* REMOVE METRIC BOX STYLING */
+[data-testid="stMetric"],
+[data-testid="metric-container"] {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* REMOVE EXTRA EMPTY WRAPPER SPACE */
 [data-testid="stVerticalBlockBorderWrapper"]:empty,
 [data-testid="stElementContainer"]:empty {
     display: none !important;
@@ -103,153 +123,33 @@ st.markdown("""
     min-height: 0 !important;
     padding: 0 !important;
     margin: 0 !important;
-}
-<style>
-.main {
-    background: #f7f8fa;
-}
-
-.hero {
-    padding: 30px 34px;
-    border-radius: 20px;
-    background: linear-gradient(135deg, #a71930 0%, #111111 100%);
-    color: white;
-    margin-bottom: 24px;
-    box-shadow: 0 8px 28px rgba(0,0,0,.12);
+}/* Remove remaining light/white section boxes */
+.reason-card,
+.deal-answer,
+[data-testid="stMetric"],
+[data-testid="metric-container"] {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
 }
 
-.hero h1 {
-    font-size: 46px;
-    margin: 0 0 4px 0;
-    font-weight: 850;
+/* Remove extra padding around metric areas */
+[data-testid="stMetric"] > div,
+[data-testid="metric-container"] > div {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
 }
 
-.hero p {
-    margin: 5px 0;
-    font-size: 18px;
-}
-
-.hero .tagline {
-    color: #f1f5f9;
-    font-size: 15px;
-}
-
-.section-title {
-    font-size: 25px;
-    font-weight: 800;
-    margin: 12px 0 10px 0;
-}
-
-.badge {
-    display: inline-block;
-    padding: 6px 11px;
-    border-radius: 999px;
-    background: #111111;
-    color: white;
-    font-size: 13px;
-    font-weight: 750;
-    margin-bottom: 8px;
-}
-
-.score-big {
-    font-size: 48px;
-    line-height: 1;
-    font-weight: 850;
-    color: #a71930;
-}
-
-.price-big {
-    font-size: 34px;
-    line-height: 1.1;
-    font-weight: 850;
-    color: #111111;
-}
-
+/* Remove the empty-looking horizontal space around these sections */
 .reason-card {
-    padding: 18px 20px;
-    border-radius: 15px;
-    background: #f1f5f9;
-    border: 1px solid #e2e8f0;
-    margin-top: 8px;
-}
-
-.reason-card b {
-    color: #111827;
-}
-
-.compare-card {
-    padding: 18px;
-    border-radius: 16px;
- background: transparent;
-    border: none;
-    box-shadow: none;
-    min-height: 190px;
-}
-
-.compare-rank {
-    font-size: 13px;
-    font-weight: 800;
-    color: #a71930;
-    text-transform: uppercase;
-    letter-spacing: .05em;
-}
-
-.compare-score {
-    font-size: 25px;
-    font-weight: 850;
-}
-
-.mini-muted {
-    color: #6b7280;
-    font-size: 13px;
-}
-
-.budget-box {
-    padding: 15px 18px;
-    border-radius: 14px;
-    background: transparent;
-    border: none;
-    margin: 12px 0 20px 0;
-}
-
-.rate-card {
-    padding: 24px;
-    border-radius: 20px;
-    background: transparent;
-    border: none;
-    box-shadow: 0 7px 24px rgba(0,0,0,.07);
-    margin: 10px 0 24px 0;
-}
-
-.deal-badge {
-    display: inline-block;
-    padding: 7px 12px;
-    border-radius: 999px;
-    background: #111111;
-    color: white;
-    font-size: 13px;
-    font-weight: 800;
-    margin-bottom: 8px;
-}
-
-.rate-score {
-    font-size: 52px;
-    line-height: 1;
-    font-weight: 900;
-    color: #a71930;
-}
-
-.compare-selected {
-    border: 2px solid #a71930;
-    box-shadow: 0 5px 18px rgba(167,25,48,.12);
+    padding: 0 !important;
+    margin: 0 !important;
 }
 
 .deal-answer {
-    padding: 16px 18px;
-    border-radius: 14px;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    margin: 12px 0;
+    padding: 0 !important;
+    margin: 8px 0 !important;
 }
 </style>
 """, unsafe_allow_html=True)
