@@ -96,13 +96,11 @@ st.markdown("""
     font-size: 46px;
     margin: 0 0 4px 0;
     font-weight: 850;
-    color: white;
 }
 
 .hero p {
     margin: 5px 0;
     font-size: 18px;
-    color: white;
 }
 
 .hero .tagline {
