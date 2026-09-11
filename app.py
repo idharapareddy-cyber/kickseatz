@@ -525,17 +525,17 @@ def calculate_ticket_score(
 
     game_quality = calculate_game_score(game)
 
-  price_score = calculate_price_score(
-    price,
-    [
-        float(t.get("price", 0))
-        for t in inventory
-        if normalize_week(t.get("week"))
-        == normalize_week(ticket.get("week"))
-        and int(t.get("available_quantity", 0))
-        >= ticket_count
-    ]
-)
+        price_score = calculate_price_score(
+        price,
+        [
+            float(t.get("price", 0))
+            for t in inventory
+            if normalize_week(t.get("week"))
+            == normalize_week(ticket.get("week"))
+            and int(t.get("available_quantity", 0))
+            >= ticket_count
+        ]
+    )
 
     seat_quality = (
         calculate_seat_quality(ticket)
@@ -1332,9 +1332,16 @@ breakdown = {
     "Game Quality":
         calculate_game_score(game),
 
-    "Price":
+       "Price":
         calculate_price_score(
-            ticket["price"]
+            ticket["price"],
+            [
+                float(t.get("price", 0))
+                for t in inventory
+                if normalize_week(t.get("week"))
+                == normalize_week(ticket.get("week"))
+                and int(t.get("available_quantity", 0)) > 0
+            ]
         ),
 
     "Seat Quality":
