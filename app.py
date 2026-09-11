@@ -119,15 +119,6 @@ st.markdown("""
     margin: 12px 0 10px 0;
 }
 
-.recommendation-card {
-    padding: 26px;
-    border-radius: 20px;
-    background: white;
-    border: 1px solid #e5e7eb;
-    box-shadow: 0 7px 24px rgba(0,0,0,.08);
-    margin: 10px 0 18px 0;
-}
-
 .badge {
     display: inline-block;
     padding: 6px 11px;
@@ -238,65 +229,6 @@ st.markdown("""
     background: #f8fafc;
     border: 1px solid #e2e8f0;
     margin: 12px 0;
-}
-
-
-/* ============================================================
-   STREAMLIT UI CLEANUP — REMOVE DEFAULT WHITE/GRAY BORDERS
-   Keep KickSeatz's intentional cards intact.
-   ============================================================ */
-
-/* Remove default bordered container shells. */
-div[data-testid="stVerticalBlockBorderWrapper"],
-div[data-testid="stVerticalBlockBorderWrapper"] > div,
-div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlock"] {
-    border: none !important;
-    outline: none !important;
-    box-shadow: none !important;
-    background: transparent !important;
-    border-radius: 0 !important;
-}
-
-/* Remove default border/background around column shells. */
-div[data-testid="column"],
-div[data-testid="column"] > div,
-div[data-testid="stColumn"],
-div[data-testid="stColumn"] > div {
-    border: none !important;
-    outline: none !important;
-    box-shadow: none !important;
-}
-
-/* Remove default element-container outlines without touching the
-   actual custom HTML cards rendered inside them. */
-div[data-testid="element-container"] {
-    border: none !important;
-    outline: none !important;
-    box-shadow: none !important;
-}
-
-div[data-testid="stElementContainer"] {
-    border: none !important;
-    outline: none !important;
-    box-shadow: none !important;
-}
-
-/* Remove accidental empty wrapper height/spacing. */
-div[data-testid="stVerticalBlockBorderWrapper"]:empty,
-div[data-testid="stVerticalBlockBorderWrapper"] > div:empty {
-    display: none !important;
-    height: 0 !important;
-    min-height: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
-
-/* Streamlit may put the border on a nested fieldset. */
-div[data-testid="stVerticalBlockBorderWrapper"] fieldset,
-div[data-testid="stVerticalBlockBorderWrapper"] section {
-    border: none !important;
-    outline: none !important;
-    box-shadow: none !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -1346,11 +1278,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown(
-    '<div class="recommendation-card">',
-    unsafe_allow_html=True,
-)
-
 left, right = st.columns([3, 1])
 
 with left:
@@ -1421,11 +1348,6 @@ with right:
     st.write(
         f"**${ticket['price'] * ticket_count:.0f} total**"
     )
-
-st.markdown(
-    "</div>",
-    unsafe_allow_html=True,
-)
 
 # ============================================================
 # BUDGET FIT
