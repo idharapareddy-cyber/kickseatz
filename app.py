@@ -83,14 +83,20 @@ MASTER_DATA_PATH = find_file(
 # ============================================================
 
 st.markdown("""
-/* RESTORE KICKSEATZ HERO */
-.hero {
+/* RESTORE KICKSEATZ HERO BOARD */
+.hero,
+div:has(> .hero) {
     display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+.hero {
     background: linear-gradient(135deg, #a71930 0%, #111111 100%) !important;
     color: white !important;
     padding: 30px 34px !important;
     border-radius: 20px !important;
-    margin: 0 0 24px 0 !important;
+    margin-bottom: 24px !important;
     box-shadow: 0 8px 28px rgba(0,0,0,.12) !important;
 }
 
