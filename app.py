@@ -83,22 +83,20 @@ MASTER_DATA_PATH = find_file(
 # ============================================================
 
 st.markdown("""
-/* Remove unwanted Streamlit borders only */
-[data-testid="stVerticalBlockBorderWrapper"] {
-    border: none !important;
-    outline: none !important;
-    box-shadow: none !important;
-    background: transparent !important;
-}
-
-/* Remove borders from empty Streamlit wrappers */
-[data-testid="stVerticalBlockBorderWrapper"]:empty {
-    display: none !important;
-}
-
-/* Keep the KickSeatz hero/title board */
+/* RESTORE KICKSEATZ HERO */
 .hero {
+    display: block !important;
     background: linear-gradient(135deg, #a71930 0%, #111111 100%) !important;
+    color: white !important;
+    padding: 30px 34px !important;
+    border-radius: 20px !important;
+    margin: 0 0 24px 0 !important;
+    box-shadow: 0 8px 28px rgba(0,0,0,.12) !important;
+}
+
+.hero h1,
+.hero p,
+.hero .tagline {
     color: white !important;
 }
 </style>
