@@ -83,73 +83,23 @@ MASTER_DATA_PATH = find_file(
 # ============================================================
 
 st.markdown("""
-/* REMOVE DEFAULT STREAMLIT WHITE BOXES */
-[data-testid="stVerticalBlockBorderWrapper"],
-[data-testid="stVerticalBlockBorderWrapper"] > div,
-[data-testid="stHorizontalBlock"],
-[data-testid="stColumn"],
-[data-testid="stElementContainer"] {
-    background: transparent !important;
+/* Remove unwanted Streamlit borders only */
+[data-testid="stVerticalBlockBorderWrapper"] {
     border: none !important;
     outline: none !important;
     box-shadow: none !important;
-}
-
-/* REMOVE WHITE/LIGHT CUSTOM CARDS */
-.recommendation-card,
-.compare-card,
-.budget-box,
-.rate-card,
-.reason-card,
-.deal-answer {
     background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
 }
 
-/* REMOVE METRIC BOX STYLING */
-[data-testid="stMetric"],
-[data-testid="metric-container"] {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-}
-
-/* REMOVE EXTRA EMPTY WRAPPER SPACE */
-[data-testid="stVerticalBlockBorderWrapper"]:empty,
-[data-testid="stElementContainer"]:empty {
+/* Remove borders from empty Streamlit wrappers */
+[data-testid="stVerticalBlockBorderWrapper"]:empty {
     display: none !important;
-    height: 0 !important;
-    min-height: 0 !important;
-    padding: 0 !important;
-    margin: 0 !important;
-}/* Remove remaining light/white section boxes */
-.reason-card,
-.deal-answer,
-[data-testid="stMetric"],
-[data-testid="metric-container"] {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
 }
 
-/* Remove extra padding around metric areas */
-[data-testid="stMetric"] > div,
-[data-testid="metric-container"] > div {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-}
-
-/* Remove the empty-looking horizontal space around these sections */
-.reason-card {
-    padding: 0 !important;
-    margin: 0 !important;
-}
-
-.deal-answer {
-    padding: 0 !important;
-    margin: 8px 0 !important;
+/* Keep the KickSeatz hero/title board */
+.hero {
+    background: linear-gradient(135deg, #a71930 0%, #111111 100%) !important;
+    color: white !important;
 }
 </style>
 """, unsafe_allow_html=True)
