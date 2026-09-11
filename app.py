@@ -83,6 +83,8 @@ MASTER_DATA_PATH = find_file(
 # ============================================================
 
 st.markdown("""
+<style>
+
 .hero {
     padding: 30px 34px;
     border-radius: 20px;
