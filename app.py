@@ -412,31 +412,44 @@ def calculate_seat_quality(ticket):
     return min(score, 10)
 
 
-def calculate_price_score(price):
+def calculate_price_score(price, comparable_prices):
+    """
+    Data-driven price value score.
 
-    if price <= 55:
-        return 100
+    The score is based on where this ticket's price ranks
+    compared with the actual available ticket inventory.
+    """
 
-    elif price <= 65:
-        return 90
-
-    elif price <= 75:
-        return 80
-
-    elif price <= 85:
-        return 70
-
-    elif price <= 95:
-        return 60
-
-    elif price <= 110:
+    if not comparable_prices:
         return 50
 
-    elif price <= 125:
-        return 40
+    prices = sorted(
+        float(p)
+        for p in comparable_prices
+        if p is not None
+    )
 
-    return 30
+    if not prices:
+        return 50
 
+    price = float(price)
+
+    cheaper_or_equal = sum(
+        1 for p in prices
+        if p >= price
+    )
+
+    percentile = cheaper_or_equal / len(prices)
+
+    return round(
+        max(
+            0,
+            min(
+                percentile * 100,
+                100
+            )
+        )
+    )
 
 def calculate_availability(
     ticket,
@@ -512,9 +525,17 @@ def calculate_ticket_score(
 
     game_quality = calculate_game_score(game)
 
-    price_score = calculate_price_score(
-        price
-    )
+  price_score = calculate_price_score(
+    price,
+    [
+        float(t.get("price", 0))
+        for t in inventory
+        if normalize_week(t.get("week"))
+        == normalize_week(ticket.get("week"))
+        and int(t.get("available_quantity", 0))
+        >= ticket_count
+    ]
+)
 
     seat_quality = (
         calculate_seat_quality(ticket)
@@ -776,9 +797,16 @@ def rate_ticket(
         game
     )
 
-    price_score = calculate_price_score(
-        float(ticket["price"])
-    )
+   price_score = calculate_price_score(
+    float(ticket["price"]),
+    [
+        float(t.get("price", 0))
+        for t in inventory
+        if normalize_week(t.get("week"))
+        == normalize_week(ticket.get("week"))
+        and int(t.get("available_quantity", 0)) > 0
+    ]
+)
 
     seat_score = (
         calculate_seat_quality(ticket)
