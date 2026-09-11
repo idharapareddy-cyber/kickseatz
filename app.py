@@ -119,6 +119,15 @@ st.markdown("""
     margin: 12px 0 10px 0;
 }
 
+.recommendation-card {
+    padding: 26px;
+    border-radius: 20px;
+    background: white;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 7px 24px rgba(0,0,0,.08);
+    margin: 10px 0 18px 0;
+}
+
 .badge {
     display: inline-block;
     padding: 6px 11px;
@@ -231,48 +240,63 @@ st.markdown("""
     margin: 12px 0;
 }
 
-/* Remove unwanted Streamlit bordered containers */
-div[data-testid="stVerticalBlockBorderWrapper"] {
-    border: none !important;
-    box-shadow: none !important;
-    background: transparent !important;
-}
 
-/* Remove any empty bordered wrapper that Streamlit creates */
-div[data-testid="stVerticalBlockBorderWrapper"]:has(> div:empty) {
-    display: none !important;
-}
+/* ============================================================
+   STREAMLIT UI CLEANUP — REMOVE DEFAULT WHITE/GRAY BORDERS
+   Keep KickSeatz's intentional cards intact.
+   ============================================================ */
 
-/* Remove empty visual space from unwanted wrappers */
-div[data-testid="stVerticalBlockBorderWrapper"] {
-    outline: none !important;
-}
-
-/* Prevent empty markdown blocks from creating visual boxes */
-div[data-testid="stMarkdownContainer"]:empty {
-    display: none !important;
-}
-
-/* Remove Streamlit's native bordered container chrome.
-   This app does not intentionally use st.container(border=True). */
+/* Remove default bordered container shells. */
 div[data-testid="stVerticalBlockBorderWrapper"],
 div[data-testid="stVerticalBlockBorderWrapper"] > div,
-div[data-testid="stVerticalBlockBorderWrapper"] > div > div {
-    border: 0 !important;
-    outline: 0 !important;
+div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlock"] {
+    border: none !important;
+    outline: none !important;
     box-shadow: none !important;
     background: transparent !important;
     border-radius: 0 !important;
 }
 
-/* Remove the empty wrapper's leftover size/gap. */
+/* Remove default border/background around column shells. */
+div[data-testid="column"],
+div[data-testid="column"] > div,
+div[data-testid="stColumn"],
+div[data-testid="stColumn"] > div {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* Remove default element-container outlines without touching the
+   actual custom HTML cards rendered inside them. */
+div[data-testid="element-container"] {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+div[data-testid="stElementContainer"] {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* Remove accidental empty wrapper height/spacing. */
 div[data-testid="stVerticalBlockBorderWrapper"]:empty,
 div[data-testid="stVerticalBlockBorderWrapper"] > div:empty {
     display: none !important;
-    min-height: 0 !important;
     height: 0 !important;
+    min-height: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
+}
+
+/* Streamlit may put the border on a nested fieldset. */
+div[data-testid="stVerticalBlockBorderWrapper"] fieldset,
+div[data-testid="stVerticalBlockBorderWrapper"] section {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -1317,15 +1341,17 @@ label = {
 
 st.markdown(
     '<div class="section-title">'
-    '🏆 Your KickSeatz Recommendation'
+    'Your KickSeatz Recommendation'
     '</div>',
     unsafe_allow_html=True,
 )
 
-left, right = st.columns(
-    [3, 1],
-    gap="large",
+st.markdown(
+    '<div class="recommendation-card">',
+    unsafe_allow_html=True,
 )
+
+left, right = st.columns([3, 1])
 
 with left:
 
@@ -1396,14 +1422,14 @@ with right:
         f"**${ticket['price'] * ticket_count:.0f} total**"
     )
 
-    if score >= 90:
-        st.success("Excellent Match")
-    elif score >= 80:
-        st.success("Great Match")
-    elif score >= 70:
-        st.info("Good Match")
-    else:
-        st.warning("Fair Match")
+st.markdown(
+    "</div>",
+    unsafe_allow_html=True,
+)
+
+# ============================================================
+# BUDGET FIT
+# ============================================================
 
 budget_used = min(
     ticket["price"] / budget,
