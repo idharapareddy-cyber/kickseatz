@@ -83,7 +83,32 @@ MASTER_DATA_PATH = find_file(
 # ============================================================
 
 st.markdown("""
+.hero {
+    padding: 30px 34px;
+    border-radius: 20px;
+    background: linear-gradient(135deg, #a71930 0%, #111111 100%);
+    color: white;
+    margin-bottom: 24px;
+    box-shadow: 0 8px 28px rgba(0,0,0,.12);
+}
 
+.hero h1 {
+    font-size: 46px;
+    margin: 0 0 4px 0;
+    font-weight: 850;
+    color: white;
+}
+
+.hero p {
+    margin: 5px 0;
+    font-size: 18px;
+    color: white;
+}
+
+.hero .tagline {
+    color: #f1f5f9;
+    font-size: 15px;
+}
 </style>
 """, unsafe_allow_html=True)
 
