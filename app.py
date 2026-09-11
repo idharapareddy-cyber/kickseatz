@@ -180,9 +180,9 @@ st.markdown("""
 .compare-card {
     padding: 18px;
     border-radius: 16px;
-    background: white;
-    border: 1px solid #e5e7eb;
-    box-shadow: 0 3px 12px rgba(0,0,0,.05);
+ background: transparent;
+    border: none;
+    box-shadow: none;
     min-height: 190px;
 }
 
@@ -207,16 +207,16 @@ st.markdown("""
 .budget-box {
     padding: 15px 18px;
     border-radius: 14px;
-    background: white;
-    border: 1px solid #e5e7eb;
+    background: transparent;
+    border: none;
     margin: 12px 0 20px 0;
 }
 
 .rate-card {
     padding: 24px;
     border-radius: 20px;
-    background: white;
-    border: 1px solid #e5e7eb;
+    background: transparent;
+    border: none;
     box-shadow: 0 7px 24px rgba(0,0,0,.07);
     margin: 10px 0 24px 0;
 }
