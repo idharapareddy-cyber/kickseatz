@@ -2,6 +2,7 @@ import os
 import json
 import sqlite3
 import re
+from datetime import datetime
 import streamlit as st
 
 # ============================================================
@@ -221,11 +222,38 @@ def load_inventory(path):
             ) from e
 
     return inventory_rows
+def record_price_history(inventory):
+    conn = sqlite3.connect(DB_PATH)
 
+    try:
+        recorded_at = datetime.now().isoformat()
+
+        for ticket in inventory:
+            conn.execute(
+                """
+                INSERT INTO price_history (
+                    ticket_id,
+                    price,
+                    recorded_at
+                )
+                VALUES (?, ?, ?)
+                """,
+                (
+                    ticket["id"],
+                    ticket["price"],
+                    recorded_at,
+                ),
+            )
+
+        conn.commit()
+
+    finally:
+        conn.close()
 
 try:
     master_dataset = load_master_dataset(MASTER_DATA_PATH)
     inventory = load_inventory(DB_PATH)
+    record_price_history(inventory)
 except Exception as e:
     st.error("KickSeatz could not load its data.")
     st.exception(e)
@@ -235,21 +263,21 @@ except Exception as e:
 # SCORING DATA
 # ============================================================
 
-OPPONENT_RATINGS = {
-    "Pittsburgh Steelers": 82,
-    "Carolina Panthers": 58,
-    "Green Bay Packers": 88,
-    "New Orleans Saints": 65,
-    "Baltimore Ravens": 91,
-    "Chicago Bears": 72,
-    "San Francisco 49ers": 94,
-    "Tampa Bay Buccaneers": 79,
-    "Cincinnati Bengals": 84,
-    "Kansas City Chiefs": 96,
-    "Minnesota Vikings": 81,
-    "Detroit Lions": 87,
-    "Cleveland Browns": 62,
-    "Washington Commanders": 74,
+OPPONENT_POWER_RANKINGS = {
+    "Pittsburgh Steelers": 21,
+    "Carolina Panthers": 23,
+    "Green Bay Packers": 12,
+    "New Orleans Saints": 22,
+    "Baltimore Ravens": 6,
+    "Chicago Bears": 11,
+    "San Francisco 49ers": 17,
+    "Tampa Bay Buccaneers": 18,
+    "Cincinnati Bengals": 7,
+    "Kansas City Chiefs": 14,
+    "Minnesota Vikings": 19,
+    "Detroit Lions": 15,
+    "Cleveland Browns": 30,
+    "Washington Commanders": 31,
 }
 
 DIVISION_RIVALS = {
@@ -346,9 +374,22 @@ def calculate_game_score(game):
     opponent = game.get("opponent", "")
     score = 50
 
+    opponent_rank = OPPONENT_POWER_RANKINGS.get(
+        opponent,
+        32,
+    )
+
+    opponent_strength = round(
+        100
+        - (
+            (opponent_rank - 1)
+            / 31
+        ) * 50
+    )
+
     score += (
-        OPPONENT_RATINGS.get(opponent, 70) - 70
-    ) * 0.35
+        opponent_strength - 70
+    ) * 0.30
 
     if game.get("home_game"):
         score += 15
@@ -357,7 +398,7 @@ def calculate_game_score(game):
         score += 15
 
     if game.get("ticketmaster_available"):
-        score += 10
+        score += 5
 
     if game.get("seatmap_url"):
         score += 5
@@ -368,8 +409,15 @@ def calculate_game_score(game):
     if game.get("all_inclusive_pricing"):
         score += 5
 
-    return round(max(0, min(score, 100)))
-
+    return round(
+        max(
+            0,
+            min(
+                score,
+                100,
+            ),
+        )
+    )
 
 def calculate_seat_quality(ticket):
 
@@ -450,6 +498,72 @@ def calculate_price_score(price, comparable_prices):
             )
         )
     )
+
+
+def calculate_confidence(
+    ticket,
+    game,
+):
+
+    confidence = 40
+
+    comparable_count = sum(
+        1
+        for t in inventory
+        if normalize_week(t.get("week"))
+        == normalize_week(ticket.get("week"))
+        and int(
+            t.get(
+                "available_quantity",
+                0,
+            )
+        ) > 0
+    )
+
+    if comparable_count >= 10:
+        confidence += 30
+
+    elif comparable_count >= 6:
+        confidence += 25
+
+    elif comparable_count >= 3:
+        confidence += 15
+
+    elif comparable_count >= 2:
+        confidence += 5
+
+    history_conn = sqlite3.connect(DB_PATH)
+
+    try:
+        history_count = history_conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM price_history
+            WHERE ticket_id = ?
+            """,
+            (ticket["id"],),
+        ).fetchone()[0]
+
+    finally:
+        history_conn.close()
+
+    if history_count >= 10:
+        confidence += 20
+
+    elif history_count >= 5:
+        confidence += 15
+
+    elif history_count >= 2:
+        confidence += 10
+
+    if game:
+        confidence += 10
+
+    return min(
+        confidence,
+        100,
+    )
+
 
 def calculate_availability(
     ticket,
@@ -556,13 +670,24 @@ def calculate_ticket_score(
         + availability * w["availability"]
     )
 
+    confidence = calculate_confidence(
+        ticket,
+        game,
+    )
+
+    confidence_multiplier = (
+        0.85
+        + (confidence / 100) * 0.15
+    )
+
+    score = score * confidence_multiplier
+
     return round(
         max(
             0,
             min(score, 100)
         )
     )
-
 
 # ============================================================
 # RECOMMENDATION ENGINE
@@ -704,6 +829,11 @@ def get_reasons(
         ticket["price"]
     )
 
+    opponent = game.get(
+        "opponent",
+        ""
+    )
+
     game_score = calculate_game_score(
         game
     )
@@ -723,65 +853,98 @@ def get_reasons(
 
     reasons = []
 
-    if priority == "Lowest Price":
+    opponent_rating = OPPONENT_POWER_RANKINGS.get(
+        opponent,
+        70
+    )
 
+    if opponent_rating >= 90:
         reasons.append(
-            f"At ${price:.0f}/ticket, this is the "
-            f"lowest-priced eligible option."
+            f"{opponent} has a strong opponent rating "
+            f"of {opponent_rating}/100."
         )
 
-    elif priority == "Best Game":
-
+    elif opponent_rating >= 80:
         reasons.append(
-            f"This matchup scores {game_score}/100 "
-            f"for game quality."
+            f"{opponent} has an above-average opponent rating "
+            f"of {opponent_rating}/100."
         )
 
     else:
-
         reasons.append(
-            f"It balances a {game_score}/100 game score "
-            f"with a ${price:.0f} ticket price."
+            f"{opponent} has an opponent rating of "
+            f"{opponent_rating}/100."
+        )
+
+    if game.get("home_game"):
+        reasons.append(
+            "Atlanta is playing at home, which adds value "
+            "to the matchup."
+        )
+
+    else:
+        reasons.append(
+            "This is an away game, so KickSeatz does not "
+            "apply the home-game advantage."
+        )
+
+    if opponent in DIVISION_RIVALS:
+        reasons.append(
+            f"{opponent} is a division rival, giving the "
+            f"matchup additional rivalry value."
+        )
+
+    if priority == "Lowest Price":
+        reasons.append(
+            f"At ${price:.0f}/ticket, this is one of the "
+            f"lowest-priced eligible options."
+        )
+
+    elif priority == "Best Game":
+        reasons.append(
+            f"This matchup earns a {game_score}/100 "
+            f"Game Quality score."
+        )
+
+    else:
+        reasons.append(
+            f"It combines a {game_score}/100 Game Quality "
+            f"score with a ${price:.0f} ticket."
         )
 
     if seat_score >= 80:
-
         reasons.append(
-            f"Section {ticket['section']} is rated strongly "
-            f"for seat quality."
+            f"Section {ticket['section']} and Row {ticket['row']} "
+            f"provide a strong seat-quality score."
         )
 
     elif seat_score >= 60:
-
         reasons.append(
             f"Section {ticket['section']} provides a solid "
-            f"seat-quality score of {seat_score}/100."
+            f"seat-quality score."
         )
 
     if availability >= max(
         ticket_count,
         3,
     ):
-
         reasons.append(
-            f"There are {availability} tickets available, "
-            f"giving your group flexibility."
+            f"{availability} tickets are available, giving "
+            f"your group flexibility."
         )
 
     if budget_left > 0:
-
         reasons.append(
             f"It stays ${budget_left:.0f} under your maximum "
             f"budget per ticket."
         )
 
     else:
-
         reasons.append(
             "It fits your maximum budget exactly."
         )
 
-    return reasons[:3]
+    return reasons[:4]
 
 
 # ============================================================
@@ -1166,6 +1329,11 @@ ticket = recommendation["ticket"]
 game = recommendation["game"]
 score = recommendation["score"]
 
+confidence = calculate_confidence(
+    ticket,
+    game,
+)
+
 label = {
     "Best Overall Value":
         "🏆 Best Overall Value",
@@ -1238,6 +1406,11 @@ with right:
 
     st.caption(
         "KickSeatz Score"
+    )
+    st.metric(
+        "Confidence",
+        f"{confidence}/100",
+
     )
 
     st.markdown(
@@ -1380,6 +1553,142 @@ with b4:
         "Availability",
         f"{breakdown['Availability']}/100",
     )
+
+# ============================================================
+# PRICE HISTORY
+# ============================================================
+
+st.markdown(
+    '<div class="section-title">'
+    '📉 Price History'
+    '</div>',
+    unsafe_allow_html=True,
+)
+
+history_conn = sqlite3.connect(DB_PATH)
+
+try:
+    history_rows = history_conn.execute(
+        """
+        SELECT price, recorded_at
+        FROM price_history
+        WHERE ticket_id = ?
+        ORDER BY recorded_at
+        """,
+        (ticket["id"],),
+    ).fetchall()
+
+finally:
+    history_conn.close()
+
+if history_rows:
+
+    history_prices = [
+        float(row[0])
+        for row in history_rows
+    ]
+
+    starting_price = history_prices[0]
+    current_price = history_prices[-1]
+    price_change = current_price - starting_price
+
+    if starting_price > 0:
+        percent_change = (
+            price_change / starting_price
+        ) * 100
+    else:
+        percent_change = 0
+
+    h1, h2, h3, h4 = st.columns(4)
+
+    with h1:
+        st.metric(
+            "Starting Price",
+            f"${starting_price:.0f}",
+        )
+
+    with h2:
+        st.metric(
+            "Current Price",
+            f"${current_price:.0f}",
+        )
+
+    with h3:
+        st.metric(
+            "Price Change",
+            f"${price_change:+.0f}",
+        )
+
+    with h4:
+        st.metric(
+            "% Change",
+            f"{percent_change:+.1f}%",
+        )
+
+    st.line_chart(
+        {
+            "Ticket Price": history_prices
+        }
+    )
+
+if len(history_prices) >= 2:
+
+    previous_price = history_prices[-2]
+    current_price = history_prices[-1]
+
+    price_change = (
+        current_price - previous_price
+    )
+
+    if previous_price > 0:
+        percent_change = (
+            price_change / previous_price
+        ) * 100
+    else:
+        percent_change = 0
+
+    if percent_change <= -10:
+
+        st.success(
+            f"🚨 Price Drop Alert — "
+            f"${abs(price_change):.0f} cheaper "
+            f"({abs(percent_change):.1f}% drop) "
+            f"than the previous recorded price."
+        )
+
+    elif price_change < 0:
+
+        st.info(
+            f"Price dropped ${abs(price_change):.0f} "
+            f"({abs(percent_change):.1f}%) "
+            f"from the previous snapshot."
+        )
+
+    elif price_change > 0:
+
+        st.warning(
+            f"Price increased ${price_change:.0f} "
+            f"({percent_change:.1f}%) "
+            f"from the previous snapshot."
+        )
+
+    else:
+
+        st.info(
+            "The ticket price has not changed "
+            "since the previous snapshot."
+        )
+
+    st.caption(
+        f"{len(history_rows)} price snapshot(s) recorded."
+    )
+
+else:
+
+    st.info(
+        "No price history has been recorded for this ticket yet."
+    )
+
 
 # ============================================================
 # TOP 3 COMPARISON
