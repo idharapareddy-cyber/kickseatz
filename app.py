@@ -567,11 +567,33 @@ try:
     )
 
     ticketmaster_events = load_ticketmaster_events()
-
     
     if isinstance(master_dataset, dict):
 
         master_dataset["games"] = (
+            enrich_games_with_ticketmaster(
+                master_dataset.get(
+                    "games",
+                    []
+                ),
+                ticketmaster_events,
+            )
+        )
+
+    inventory = load_inventory(
+        DB_PATH
+    )
+
+    record_price_history(
+        inventory
+    )
+
+except Exception as e:
+    st.error("KickSeatz could not load its data.")
+    st.exception(e)
+    st.stop()
+
+    master_dataset["games"] = (
             enrich_games_with_ticketmaster(
                 master_dataset.get(
                     "games",
