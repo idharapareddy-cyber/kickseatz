@@ -7,6 +7,8 @@ import requests
 import streamlit as st
 
 TICKETMASTER_API_KEY = st.secrets["TICKETMASTER_API_KEY"]
+
+
 @st.cache_data(ttl=300)
 def load_ticketmaster_events():
 
@@ -15,7 +17,10 @@ def load_ticketmaster_events():
         params={
             "apikey": TICKETMASTER_API_KEY,
             "keyword": "Atlanta Falcons",
+            "city": "Atlanta",
+            "stateCode": "GA",
             "countryCode": "US",
+            "source": "ticketmaster",
             "size": 100,
             "sort": "date,asc",
         },
@@ -33,6 +38,242 @@ def load_ticketmaster_events():
         "events",
         [],
     )
+
+
+def enrich_games_with_ticketmaster(
+    games,
+    ticketmaster_events,
+):
+
+    if not isinstance(games, list):
+        return games
+
+    enriched_games = []
+
+    for game in games:
+
+        if not isinstance(game, dict):
+            enriched_games.append(game)
+            continue
+
+        game_copy = dict(game)
+
+        opponent = str(
+            game.get(
+                "opponent",
+                "",
+            )
+        ).lower()
+
+        game_date = str(
+            game.get(
+                "game_date",
+                "",
+            )
+        )[:10]
+
+        matching_event = None
+
+        for event in ticketmaster_events:
+
+            event_name = str(
+                event.get(
+                    "name",
+                    "",
+                )
+            ).lower()
+
+            event_date = str(
+                event.get(
+                    "dates",
+                    {},
+                )
+                .get(
+                    "start",
+                    {},
+                )
+                .get(
+                    "localDate",
+                    "",
+                )
+            )
+
+            if game_date and event_date != game_date:
+                continue
+
+            if opponent and opponent not in event_name:
+                continue
+
+            if "falcons" not in event_name:
+                continue
+
+            matching_event = event
+            break
+
+        if matching_event:
+
+            game_copy["ticketmaster_event_id"] = (
+                matching_event.get("id")
+            )
+
+            game_copy["ticketmaster_url"] = (
+                matching_event.get("url")
+            )
+
+            price_ranges = matching_event.get(
+                "priceRanges",
+                [],
+            )
+
+            if price_ranges:
+
+                price_range = price_ranges[0]
+
+                game_copy["ticketmaster_min_price"] = (
+                    price_range.get("min")
+                )
+
+                game_copy["ticketmaster_max_price"] = (
+                    price_range.get("max")
+                )
+
+                game_copy["ticketmaster_currency"] = (
+                    price_range.get("currency")
+                )
+
+        enriched_games.append(game_copy)
+
+    return enriched_games
+    data = response.json()
+
+    return data.get(
+        "_embedded",
+        {},
+    ).get(
+        "events",
+        [],
+    )
+def enrich_games_with_ticketmaster(
+    games,
+    ticketmaster_events,
+):
+
+    if not isinstance(games, list):
+        return games
+
+    enriched_games = []
+
+    for game in games:
+
+        if not isinstance(game, dict):
+            enriched_games.append(game)
+            continue
+
+        game_copy = dict(game)
+
+        opponent = str(
+            game.get(
+                "opponent",
+                "",
+            )
+        ).lower()
+
+        game_date = str(
+            game.get(
+                "game_date",
+                "",
+            )
+        )[:10]
+
+        matching_event = None
+
+        for event in ticketmaster_events:
+
+            event_name = str(
+                event.get(
+                    "name",
+                    "",
+                )
+            ).lower()
+
+            event_dates = (
+                event.get(
+                    "dates",
+                    {}
+                )
+                .get(
+                    "start",
+                    {}
+                )
+            )
+
+            event_date = str(
+                event_dates.get(
+                    "localDate",
+                    "",
+                )
+            )
+
+            if game_date and event_date != game_date:
+                continue
+
+            if opponent and opponent not in event_name:
+                continue
+
+            if "falcons" not in event_name:
+                continue
+
+            matching_event = event
+            break
+
+        if matching_event:
+
+            game_copy["ticketmaster_event_id"] = (
+                matching_event.get("id")
+            )
+
+            game_copy["ticketmaster_url"] = (
+                matching_event.get("url")
+            )
+
+            game_copy["ticketmaster_status"] = (
+                matching_event.get(
+                    "dates",
+                    {}
+                )
+                .get(
+                    "status",
+                    {}
+                )
+                .get(
+                    "code"
+                )
+            )
+
+            price_ranges = matching_event.get(
+                "priceRanges",
+                [],
+            )
+
+            if price_ranges:
+
+                first_range = price_ranges[0]
+
+                game_copy[
+                    "ticketmaster_min_price"
+                ] = first_range.get("min")
+
+                game_copy[
+                    "ticketmaster_max_price"
+                ] = first_range.get("max")
+
+                game_copy[
+                    "ticketmaster_currency"
+                ] = first_range.get("currency")
+
+        enriched_games.append(game_copy)
+
+    return enriched_games
 response = requests.get(
     "https://app.ticketmaster.com/discovery/v2/events.json",
     params={
@@ -321,12 +562,32 @@ def record_price_history(inventory):
         conn.close()
 
 try:
-    master_dataset = load_master_dataset(MASTER_DATA_PATH)
-    inventory = load_inventory(DB_PATH)
+    master_dataset = load_master_dataset(
+        MASTER_DATA_PATH
+    )
 
     ticketmaster_events = load_ticketmaster_events()
 
-    record_price_history(inventory)
+    
+    if isinstance(master_dataset, dict):
+
+        master_dataset["games"] = (
+            enrich_games_with_ticketmaster(
+                master_dataset.get(
+                    "games",
+                    []
+                ),
+                ticketmaster_events,
+            )
+        )
+
+    inventory = load_inventory(
+        DB_PATH
+    )
+
+    record_price_history(
+        inventory
+    )
 
 except Exception as e:
     st.error("KickSeatz could not load its data.")
