@@ -523,7 +523,7 @@ def calculate_ticket_score(
     if price > budget:
         return -1
 
-       game_quality = calculate_game_score(game)
+          game_quality = calculate_game_score(game)
 
     price_score = calculate_price_score(
         price,
