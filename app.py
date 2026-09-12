@@ -226,6 +226,17 @@ def record_price_history(inventory):
     conn = sqlite3.connect(DB_PATH)
 
     try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS price_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER,
+                price REAL NOT NULL,
+                recorded_at TEXT NOT NULL
+            )
+            """
+        )
+
         recorded_at = datetime.now().isoformat()
 
         for ticket in inventory:
