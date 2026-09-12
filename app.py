@@ -3,7 +3,48 @@ import json
 import sqlite3
 import re
 from datetime import datetime
+import requests
 import streamlit as st
+
+TICKETMASTER_API_KEY = st.secrets["TICKETMASTER_API_KEY"]
+@st.cache_data(ttl=300)
+def load_ticketmaster_events():
+
+    response = requests.get(
+        "https://app.ticketmaster.com/discovery/v2/events.json",
+        params={
+            "apikey": TICKETMASTER_API_KEY,
+            "keyword": "Atlanta Falcons",
+            "countryCode": "US",
+            "size": 100,
+            "sort": "date,asc",
+        },
+        timeout=10,
+    )
+
+    response.raise_for_status()
+
+    data = response.json()
+
+    return data.get(
+        "_embedded",
+        {},
+    ).get(
+        "events",
+        [],
+    )
+response = requests.get(
+    "https://app.ticketmaster.com/discovery/v2/events.json",
+    params={
+        "apikey": TICKETMASTER_API_KEY,
+        "keyword": "Atlanta Falcons",
+        "countryCode": "US",
+        "size": 5,
+    },
+    timeout=10,
+)
+
+response.raise_for_status()
 
 # ============================================================
 # KICKSEATZ — SMART SPORTS TICKET FINDER
@@ -282,7 +323,11 @@ def record_price_history(inventory):
 try:
     master_dataset = load_master_dataset(MASTER_DATA_PATH)
     inventory = load_inventory(DB_PATH)
+
+    ticketmaster_events = load_ticketmaster_events()
+
     record_price_history(inventory)
+
 except Exception as e:
     st.error("KickSeatz could not load its data.")
     st.exception(e)
