@@ -240,21 +240,39 @@ def record_price_history(inventory):
         recorded_at = datetime.now().isoformat()
 
         for ticket in inventory:
-            conn.execute(
+
+            latest = conn.execute(
                 """
-                INSERT INTO price_history (
-                    ticket_id,
-                    price,
-                    recorded_at
-                )
-                VALUES (?, ?, ?)
+                SELECT price
+                FROM price_history
+                WHERE ticket_id = ?
+                ORDER BY recorded_at DESC
+                LIMIT 1
                 """,
-                (
-                    ticket["id"],
-                    ticket["price"],
-                    recorded_at,
-                ),
+                (ticket["id"],),
+            ).fetchone()
+
+            current_price = float(
+                ticket["price"]
             )
+
+            if latest is None or float(latest[0]) != current_price:
+
+                conn.execute(
+                    """
+                    INSERT INTO price_history (
+                        ticket_id,
+                        price,
+                        recorded_at
+                    )
+                    VALUES (?, ?, ?)
+                    """,
+                    (
+                        ticket["id"],
+                        current_price,
+                        recorded_at,
+                    ),
+                )
 
         conn.commit()
 
@@ -1805,52 +1823,58 @@ if history_rows:
         }
     )
 
-if len(history_prices) >= 2:
+    if len(history_prices) >= 2:
 
-    previous_price = history_prices[-2]
-    current_price = history_prices[-1]
+        previous_price = history_prices[-2]
+        current_price = history_prices[-1]
 
-    price_change = (
-        current_price - previous_price
-    )
-
-    if previous_price > 0:
-        percent_change = (
-            price_change / previous_price
-        ) * 100
-    else:
-        percent_change = 0
-
-    if percent_change <= -10:
-
-        st.success(
-            f"🚨 Price Drop Alert — "
-            f"${abs(price_change):.0f} cheaper "
-            f"({abs(percent_change):.1f}% drop) "
-            f"than the previous recorded price."
+        price_change = (
+            current_price - previous_price
         )
 
-    elif price_change < 0:
+        if previous_price > 0:
+            percent_change = (
+                price_change / previous_price
+            ) * 100
+        else:
+            percent_change = 0
+
+        if percent_change <= -10:
+
+            st.success(
+                f"🚨 Price Drop Alert — "
+                f"${abs(price_change):.0f} cheaper "
+                f"({abs(percent_change):.1f}% drop) "
+                f"than the previous recorded price."
+            )
+
+        elif price_change < 0:
+
+            st.info(
+                f"Price dropped ${abs(price_change):.0f} "
+                f"({abs(percent_change):.1f}%) "
+                f"from the previous snapshot."
+            )
+
+        elif price_change > 0:
+
+            st.warning(
+                f"Price increased ${price_change:.0f} "
+                f"({percent_change:.1f}%) "
+                f"from the previous snapshot."
+            )
+
+        else:
+
+            st.info(
+                "The ticket price has not changed "
+                "since the previous snapshot."
+            )
+
+    else:
 
         st.info(
-            f"Price dropped ${abs(price_change):.0f} "
-            f"({abs(percent_change):.1f}%) "
-            f"from the previous snapshot."
-        )
-
-    elif price_change > 0:
-
-        st.warning(
-            f"Price increased ${price_change:.0f} "
-            f"({percent_change:.1f}%) "
-            f"from the previous snapshot."
-        )
-
-    else:
-
-        st.info(
-            "The ticket price has not changed "
-            "since the previous snapshot."
+            "Only one price snapshot has been recorded so far."
         )
 
     st.caption(
@@ -2093,6 +2117,42 @@ if rate_options:
                 f"{rating[key]}/100",
             )
 
+            if key == "game":
+
+                opponent = rg.get(
+                    "opponent",
+                    ""
+                )
+
+                opponent_rank = OPPONENT_POWER_RANKINGS.get(
+                    opponent,
+                    32,
+                )
+
+                st.caption(
+                    f"{opponent} is ranked #{opponent_rank}. "
+                    "Source: NFL.com Week 1 Power Rankings (2026)."
+                )
+
+            elif key == "price":
+
+                st.caption(
+                    "Compared with available tickets for the same matchup."
+                )
+
+            elif key == "seat":
+
+                st.caption(
+                    f"Section {rt['section']} • "
+                    f"Row {rt['row']}."
+                )
+
+            elif key == "availability":
+
+                st.caption(
+                    f"{rt['available_quantity']} tickets available."
+                )
+
     st.markdown(
         "**Why this rating?**"
     )
@@ -2224,10 +2284,32 @@ if len(rate_options) >= 2:
                 )
 
                 st.caption(
-                    f"Game {r['game']} • "
-                    f"Price {r['price']} • "
-                    f"Seat {r['seat']} • "
-                    f"Availability {r['availability']}"
+                    f"Game: {r['game']}/100"
+                )
+
+                st.caption(
+                    f"Price: {r['price']}/100 — "
+                    "compared with available tickets."
+                )
+
+                st.caption(
+                    f"Seat: {r['seat']}/100 — "
+                    "based on section and row."
+                )
+
+                st.caption(
+                    f"Availability: {r['availability']}/100 — "
+                    f"{t['available_quantity']} tickets available."
+                )
+
+                compare_confidence = calculate_confidence(
+                    t,
+                    g,
+                )
+
+                st.caption(
+                    f"Confidence: {compare_confidence}/100 — "
+                    "based on comparison and history data."
                 )
 
                 st.markdown(
