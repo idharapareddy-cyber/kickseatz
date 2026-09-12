@@ -1423,7 +1423,9 @@ with right:
         f"{confidence}/100",
 
     )
-
+    st.caption(
+        "Based on comparable ticket inventory, price-history data, and game data."
+    )
     st.markdown(
         f'<div class="price-big">'
         f'${ticket["price"]:.0f}'
@@ -1515,7 +1517,7 @@ breakdown = {
     "Game Quality":
         calculate_game_score(game),
 
-       "Price":
+    "Price":
         calculate_price_score(
             ticket["price"],
             [
@@ -1535,16 +1537,49 @@ breakdown = {
             ticket,
             ticket_count,
         ),
+
+    "Confidence":
+        confidence,
 }
 
 st.write("")
 
-b1, b2, b3, b4 = st.columns(4)
+b1, b2, b3, b4, b5 = st.columns(5)
 
 with b1:
     st.metric(
         "Game Quality",
         f"{breakdown['Game Quality']}/100",
+    )
+
+    opponent = game.get(
+        "opponent",
+        ""
+    )
+
+    opponent_rank = OPPONENT_POWER_RANKINGS.get(
+        opponent,
+        32,
+    )
+
+    game_notes = []
+
+    game_notes.append(
+        f"{opponent} is ranked #{opponent_rank}."
+    )
+
+    if game.get("home_game"):
+        game_notes.append(
+            "Home-game advantage included."
+        )
+
+    if opponent in DIVISION_RIVALS:
+        game_notes.append(
+            "Division-rival bonus included."
+        )
+
+    st.caption(
+        " ".join(game_notes)
     )
 
 with b2:
@@ -1553,16 +1588,144 @@ with b2:
         f"{breakdown['Price']}/100",
     )
 
+    comparable_prices = [
+        float(t.get("price", 0))
+        for t in inventory
+        if normalize_week(t.get("week"))
+        == normalize_week(ticket.get("week"))
+        and int(t.get("available_quantity", 0)) > 0
+    ]
+
+    if comparable_prices:
+        cheaper_count = sum(
+            1
+            for p in comparable_prices
+            if p >= float(ticket["price"])
+        )
+
+        price_percentile = round(
+            (cheaper_count / len(comparable_prices)) * 100
+        )
+
+        st.caption(
+            f"${ticket['price']:.0f} is cheaper than "
+            f"{price_percentile}% of comparable available tickets."
+        )
+
 with b3:
     st.metric(
         "Seat Quality",
         f"{breakdown['Seat Quality']}/100",
     )
 
+    section = str(
+        ticket.get("section", "")
+    )
+
+    row = str(
+        ticket.get("row", "")
+    )
+
+    seat_notes = []
+
+    try:
+        section_number = int(
+            "".join(
+                c for c in section
+                if c.isdigit()
+            )
+        )
+
+        if 101 <= section_number <= 134:
+            seat_notes.append(
+                "Lower-bowl section."
+            )
+
+    except ValueError:
+        pass
+
+    try:
+        row_number = int(
+            "".join(
+                c for c in row
+                if c.isdigit()
+            )
+        )
+
+        if row_number <= 5:
+            seat_notes.append(
+                "Excellent row position."
+            )
+
+        elif row_number <= 10:
+            seat_notes.append(
+                "Good row position."
+            )
+
+    except ValueError:
+        pass
+
+    if not seat_notes:
+        seat_notes.append(
+            "Standard seat-quality rating based on section and row."
+        )
+
+    st.caption(
+        " ".join(seat_notes)
+    )
+
 with b4:
     st.metric(
         "Availability",
         f"{breakdown['Availability']}/100",
+    )
+
+    available = int(
+        ticket.get(
+            "available_quantity",
+            0,
+        )
+    )
+
+    if available >= ticket_count:
+        st.caption(
+            f"{available} tickets available — "
+            f"enough for your group."
+        )
+    else:
+        st.caption(
+            "Not enough tickets available "
+            "for your requested quantity."
+        )
+
+with b5:
+    st.metric(
+        "Confidence",
+        f"{breakdown['Confidence']}/100",
+    )
+
+    if confidence >= 85:
+        confidence_note = (
+            "High confidence — strong data coverage."
+        )
+
+    elif confidence >= 70:
+        confidence_note = (
+            "Good confidence — enough data for a solid comparison."
+        )
+
+    elif confidence >= 50:
+        confidence_note = (
+            "Moderate confidence — more data would improve reliability."
+        )
+
+    else:
+        confidence_note = (
+            "Low confidence — limited comparison or history data."
+        )
+
+    st.caption(
+        confidence_note
     )
 
 # ============================================================
