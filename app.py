@@ -41,6 +41,7 @@ def load_ticketmaster_events():
 
 
 def enrich_games_with_ticketmaster(
+        
     games,
     ticketmaster_events,
 ):
