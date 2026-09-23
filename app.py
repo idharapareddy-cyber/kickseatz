@@ -2,158 +2,45 @@ import os
 import json
 import sqlite3
 import re
+import csv
+import io
+import statistics
 from datetime import datetime
 import requests
 import streamlit as st
 
-TICKETMASTER_API_KEY = st.secrets["TICKETMASTER_API_KEY"]
+# Streamlit page configuration must happen before other Streamlit UI calls.
+TICKETMASTER_API_KEY = st.secrets.get("TICKETMASTER_API_KEY", "")
 
 
 @st.cache_data(ttl=300)
 def load_ticketmaster_events():
+    """Load Falcons event metadata without taking down the whole app if TM is unavailable."""
+    if not TICKETMASTER_API_KEY:
+        return []
 
-    response = requests.get(
-        "https://app.ticketmaster.com/discovery/v2/events.json",
-        params={
-            "apikey": TICKETMASTER_API_KEY,
-            "keyword": "Atlanta Falcons",
-            "city": "Atlanta",
-            "stateCode": "GA",
-            "countryCode": "US",
-            "source": "ticketmaster",
-            "size": 100,
-            "sort": "date,asc",
-        },
-        timeout=10,
-    )
-
-    response.raise_for_status()
-
-    data = response.json()
-
-    return data.get(
-        "_embedded",
-        {},
-    ).get(
-        "events",
-        [],
-    )
+    try:
+        response = requests.get(
+            "https://app.ticketmaster.com/discovery/v2/events.json",
+            params={
+                "apikey": TICKETMASTER_API_KEY,
+                "keyword": "Atlanta Falcons",
+                "city": "Atlanta",
+                "stateCode": "GA",
+                "countryCode": "US",
+                "source": "ticketmaster",
+                "size": 100,
+                "sort": "date,asc",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data.get("_embedded", {}).get("events", [])
+    except (requests.RequestException, ValueError, TypeError):
+        return []
 
 
-def enrich_games_with_ticketmaster(
-        
-    games,
-    ticketmaster_events,
-):
-
-    if not isinstance(games, list):
-        return games
-
-    enriched_games = []
-
-    for game in games:
-
-        if not isinstance(game, dict):
-            enriched_games.append(game)
-            continue
-
-        game_copy = dict(game)
-
-        opponent = str(
-            game.get(
-                "opponent",
-                "",
-            )
-        ).lower()
-
-        game_date = str(
-            game.get(
-                "game_date",
-                "",
-            )
-        )[:10]
-
-        matching_event = None
-
-        for event in ticketmaster_events:
-
-            event_name = str(
-                event.get(
-                    "name",
-                    "",
-                )
-            ).lower()
-
-            event_date = str(
-                event.get(
-                    "dates",
-                    {},
-                )
-                .get(
-                    "start",
-                    {},
-                )
-                .get(
-                    "localDate",
-                    "",
-                )
-            )
-
-            if game_date and event_date != game_date:
-                continue
-
-            if opponent and opponent not in event_name:
-                continue
-
-            if "falcons" not in event_name:
-                continue
-
-            matching_event = event
-            break
-
-        if matching_event:
-
-            game_copy["ticketmaster_event_id"] = (
-                matching_event.get("id")
-            )
-
-            game_copy["ticketmaster_url"] = (
-                matching_event.get("url")
-            )
-
-            price_ranges = matching_event.get(
-                "priceRanges",
-                [],
-            )
-
-            if price_ranges:
-
-                price_range = price_ranges[0]
-
-                game_copy["ticketmaster_min_price"] = (
-                    price_range.get("min")
-                )
-
-                game_copy["ticketmaster_max_price"] = (
-                    price_range.get("max")
-                )
-
-                game_copy["ticketmaster_currency"] = (
-                    price_range.get("currency")
-                )
-
-        enriched_games.append(game_copy)
-
-    return enriched_games
-    data = response.json()
-
-    return data.get(
-        "_embedded",
-        {},
-    ).get(
-        "events",
-        [],
-    )
 def enrich_games_with_ticketmaster(
     games,
     ticketmaster_events,
@@ -275,18 +162,6 @@ def enrich_games_with_ticketmaster(
         enriched_games.append(game_copy)
 
     return enriched_games
-response = requests.get(
-    "https://app.ticketmaster.com/discovery/v2/events.json",
-    params={
-        "apikey": TICKETMASTER_API_KEY,
-        "keyword": "Atlanta Falcons",
-        "countryCode": "US",
-        "size": 5,
-    },
-    timeout=10,
-)
-
-response.raise_for_status()
 
 # ============================================================
 # KICKSEATZ — SMART SPORTS TICKET FINDER
@@ -661,6 +536,12 @@ WEIGHTS = {
         "game": 0.75,
         "price": 0.05,
         "seat": 0.10,
+        "availability": 0.10,
+    },
+    "Best Seats": {
+        "game": 0.15,
+        "price": 0.10,
+        "seat": 0.65,
         "availability": 0.10,
     },
 }
@@ -1054,6 +935,7 @@ def calculate_ticket_score(
 def get_eligible_tickets(
     budget,
     ticket_count,
+    selected_week=None,
 ):
 
     eligible = []
@@ -1077,6 +959,9 @@ def get_eligible_tickets(
         if quantity < ticket_count:
             continue
 
+        if selected_week is not None and normalize_week(ticket.get("week")) != normalize_week(selected_week):
+            continue
+
         game = get_game_by_week(
             ticket.get("week")
         )
@@ -1095,6 +980,7 @@ def score_candidates(
     budget,
     ticket_count,
     priority,
+    selected_week=None,
 ):
 
     candidates = []
@@ -1102,6 +988,7 @@ def score_candidates(
     for ticket, game in get_eligible_tickets(
         budget,
         ticket_count,
+        selected_week,
     ):
 
         score = calculate_ticket_score(
@@ -1491,6 +1378,128 @@ def get_deal_assessment(
 
 
 # ============================================================
+# VALUE / UI HELPERS
+# ============================================================
+
+def get_game_selector_options():
+    games = (
+        master_dataset.get("games", [])
+        if isinstance(master_dataset, dict)
+        else []
+    )
+    valid_games = [g for g in games if isinstance(g, dict)]
+    valid_games.sort(key=lambda g: normalize_week(g.get("week")) or 999)
+    return valid_games
+
+
+def get_price_benchmark(ticket):
+    comparable = [
+        float(t.get("price", 0))
+        for t in inventory
+        if normalize_week(t.get("week")) == normalize_week(ticket.get("week"))
+        and int(t.get("available_quantity", 0)) > 0
+    ]
+    if not comparable:
+        return None
+
+    current = float(ticket["price"])
+    median_price = statistics.median(comparable)
+    cheapest = min(comparable)
+    highest = max(comparable)
+    below_median = sum(1 for p in comparable if current <= p) / len(comparable) * 100
+
+    return {
+        "current": current,
+        "median": median_price,
+        "cheapest": cheapest,
+        "highest": highest,
+        "sample_size": len(comparable),
+        "percentile": round(below_median),
+        "difference": current - median_price,
+    }
+
+
+def get_budget_insights(candidates, recommended_ticket, budget):
+    current_price = float(recommended_ticket["price"])
+    cheaper = [
+        c for c in candidates
+        if float(c["ticket"]["price"]) < current_price
+    ]
+    upgrades = [
+        c for c in candidates
+        if float(c["ticket"]["price"]) > current_price
+        and float(c["ticket"]["price"]) <= float(budget)
+    ]
+
+    cheaper_option = min(
+        cheaper,
+        key=lambda c: float(c["ticket"]["price"]),
+        default=None,
+    )
+    upgrade = min(
+        upgrades,
+        key=lambda c: float(c["ticket"]["price"]),
+        default=None,
+    )
+    return cheaper_option, upgrade
+
+
+def build_candidate_csv(candidates, limit=15):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Rank",
+        "Week",
+        "Opponent",
+        "Game Date",
+        "Section",
+        "Row",
+        "Price Per Ticket",
+        "Tickets Available",
+        "KickSeatz Score",
+        "Game Quality",
+        "Price Score",
+        "Seat Quality",
+        "Availability",
+        "Ticketmaster Link",
+    ])
+
+    for rank, candidate in enumerate(candidates[:limit], start=1):
+        t = candidate["ticket"]
+        g = candidate["game"]
+        rating = rate_ticket(t, g)
+        writer.writerow([
+            rank,
+            g.get("week"),
+            g.get("opponent"),
+            g.get("game_date"),
+            t.get("section"),
+            t.get("row"),
+            round(float(t.get("price", 0)), 2),
+            t.get("available_quantity"),
+            candidate["score"],
+            rating["game"],
+            rating["price"],
+            rating["seat"],
+            rating["availability"],
+            g.get("ticketmaster_url", ""),
+        ])
+
+    return output.getvalue()
+
+
+def get_ticketmaster_status_text(game):
+    code = str(game.get("ticketmaster_status", "")).upper()
+    if code == "onsale":
+        return "Ticketmaster event found • on sale"
+    if code:
+        return f"Ticketmaster event found • status: {code}"
+    if game.get("ticketmaster_event_id"):
+        return "Ticketmaster event found"
+    return "Ticketmaster event link not available"
+
+
+# ============================================================
 # HERO
 # ============================================================
 
@@ -1533,13 +1542,33 @@ priority = st.sidebar.radio(
         "Best Overall Value",
         "Lowest Price",
         "Best Game",
+        "Best Seats",
     ],
 )
 
-st.sidebar.divider()
+selector_games = get_game_selector_options()
+game_selector_labels = ["All 2026 Games"] + [
+    f"Week {g.get('week')} • Falcons vs {g.get('opponent')} • {g.get('game_date', 'Date N/A')}"
+    for g in selector_games
+]
 
+selected_game_label = st.sidebar.selectbox(
+    "Game",
+    game_selector_labels,
+    index=0,
+)
+
+selected_week = None
+if selected_game_label != "All 2026 Games":
+    selected_index = game_selector_labels.index(selected_game_label) - 1
+    selected_week = selector_games[selected_index].get("week")
+
+st.sidebar.divider()
 st.sidebar.caption(
     "KickSeatz MVP • Atlanta Falcons 2026"
+)
+st.sidebar.caption(
+    "Ticketmaster event data refreshes through a 5-minute cache."
 )
 
 # ============================================================
@@ -1549,12 +1578,14 @@ st.sidebar.caption(
 eligible_tickets = get_eligible_tickets(
     budget,
     ticket_count,
+    selected_week,
 )
 
 candidates = score_candidates(
     budget,
     ticket_count,
     priority,
+    selected_week,
 )
 
 # ============================================================
@@ -1587,6 +1618,12 @@ with m4:
         priority
     )
 
+if selected_week is not None:
+    st.info(
+        f"Game filter active: Week {selected_week} • Falcons vs "
+        f"{get_game_by_week(selected_week).get('opponent', 'Unknown opponent')}"
+    )
+
 # ============================================================
 # NO RESULTS
 # ============================================================
@@ -1600,8 +1637,11 @@ if not candidates:
     valid_prices = [
         t["price"]
         for t in inventory
-        if t["available_quantity"]
-        >= ticket_count
+        if t["available_quantity"] >= ticket_count
+        and (
+            selected_week is None
+            or normalize_week(t.get("week")) == normalize_week(selected_week)
+        )
     ]
 
     if valid_prices:
@@ -1755,6 +1795,18 @@ with left:
         f"tickets available"
     )
 
+    st.caption(get_ticketmaster_status_text(game))
+
+    if game.get("ticketmaster_url"):
+        st.link_button(
+            "🎟️ View Event on Ticketmaster",
+            game["ticketmaster_url"],
+        )
+    else:
+        st.info(
+            "Ticketmaster event link is unavailable for this matchup."
+        )
+
 with right:
 
     st.markdown(
@@ -1823,6 +1875,89 @@ st.markdown(
 )
 
 # ============================================================
+# PRICE BENCHMARK + BUDGET OPPORTUNITY
+# ============================================================
+
+benchmark = get_price_benchmark(ticket)
+if benchmark:
+    st.markdown(
+        '<div class="section-title">📈 Price Benchmark</div>',
+        unsafe_allow_html=True,
+    )
+
+    pb1, pb2, pb3, pb4 = st.columns(4)
+
+    with pb1:
+        st.metric("Same-game Median", f"${benchmark['median']:.0f}")
+
+    with pb2:
+        st.metric("Cheapest Available", f"${benchmark['cheapest']:.0f}")
+
+    with pb3:
+        delta_text = (
+            f"${abs(benchmark['difference']):.0f} below median"
+            if benchmark["difference"] < 0
+            else f"${benchmark['difference']:.0f} above median"
+            if benchmark["difference"] > 0
+            else "At median"
+        )
+        st.metric("Ticket Position", f"{benchmark['percentile']}%", delta_text)
+
+    with pb4:
+        st.metric("Comparable Tickets", benchmark["sample_size"])
+
+    st.caption(
+        "Benchmark uses KickSeatz's currently loaded inventory for the same matchup; "
+        "it is not a live market-wide average."
+    )
+
+cheaper_option, upgrade_option = get_budget_insights(
+    candidates,
+    ticket,
+    budget,
+)
+
+if cheaper_option or upgrade_option:
+    st.markdown(
+        '<div class="section-title">💡 What Your Budget Can Change</div>',
+        unsafe_allow_html=True,
+    )
+
+    budget_cols = st.columns(2)
+
+    with budget_cols[0]:
+        if cheaper_option:
+            ct = cheaper_option["ticket"]
+            cg = cheaper_option["game"]
+            savings = float(ticket["price"]) - float(ct["price"])
+            st.success(
+                f"Save ${savings:.0f}/ticket with Falcons vs {cg['opponent']} "
+                f"at ${float(ct['price']):.0f}."
+            )
+            st.caption(
+                f"Section {ct['section']} • Row {ct['row']} • "
+                f"Score {cheaper_option['score']}/100"
+            )
+        else:
+            st.info("No cheaper eligible ticket is available in the current inventory.")
+
+    with budget_cols[1]:
+        if upgrade_option:
+            ut = upgrade_option["ticket"]
+            ug = upgrade_option["game"]
+            extra = float(ut["price"]) - float(ticket["price"])
+            st.info(
+                f"Spend ${extra:.0f} more/ticket for Falcons vs {ug['opponent']} "
+                f"at ${float(ut['price']):.0f}."
+            )
+            st.caption(
+                f"Section {ut['section']} • Row {ut['row']} • "
+                f"Score {upgrade_option['score']}/100"
+            )
+        else:
+            st.info("No higher-priced eligible upgrade is available within your budget.")
+
+# ============================================================
 # WHY KICKSEATZ CHOSE IT
 # ============================================================
 
@@ -1855,6 +1990,37 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True,
 )
+
+# ============================================================
+# BEST ALTERNATIVE
+# ============================================================
+
+if len(candidates) >= 2:
+    alternative = candidates[1]
+    at = alternative["ticket"]
+    ag = alternative["game"]
+
+    st.markdown(
+        '<div class="section-title">🔄 Best Alternative</div>',
+        unsafe_allow_html=True,
+    )
+
+    alt1, alt2, alt3 = st.columns(3)
+    with alt1:
+        st.metric("Alternative Score", f"{alternative['score']}/100")
+    with alt2:
+        st.metric("Price", f"${float(at['price']):.0f}/ticket")
+    with alt3:
+        score_gap = alternative["score"] - score
+        st.metric("Score Difference", f"{score_gap:+.0f}")
+
+    st.write(
+        f"Falcons vs **{ag['opponent']}** • Section **{at['section']}** • "
+        f"Row **{at['row']}** • {at['available_quantity']} available"
+    )
+    st.caption(
+        "This is the next option in the same recommendation model, not a separate opinion."
+    )
 
 # ============================================================
 # SCORE BREAKDOWN
@@ -2315,6 +2481,25 @@ if len(candidates) > 3:
             )
 
 # ============================================================
+# EXPORT RESULTS
+# ============================================================
+
+if candidates:
+    st.markdown(
+        '<div class="section-title">⬇️ Save Your Results</div>',
+        unsafe_allow_html=True,
+    )
+    st.download_button(
+        "Download Top Matches as CSV",
+        data=build_candidate_csv(candidates),
+        file_name="kickseatz_recommendations.csv",
+        mime="text/csv",
+    )
+    st.caption(
+        "Exports up to 15 currently eligible matches using the active budget, ticket count, game filter, and priority."
+    )
+
+# ============================================================
 # RATE MY TICKET + DEAL ANALYSIS
 # ============================================================
 
@@ -2660,8 +2845,31 @@ if len(rate_options) >= 2:
         )
 
 st.caption(
-    "Core MVP features: Smart Finder • Rate My Ticket "
-    "• Deal Analysis • Ticket Comparison"
+    "Core MVP features: Smart Finder • Game Selector • Rate My Ticket "
+    "• Deal Analysis • Price Benchmark • Ticket Comparison • CSV Export"
+)
+
+# ============================================================
+# TICKETMASTER PARTNER ACCESS STATUS
+# ============================================================
+
+st.markdown(
+    '<div class="section-title">🔗 Live Ticketing Access</div>',
+    unsafe_allow_html=True,
+)
+
+if TICKETMASTER_API_KEY and ticketmaster_events:
+    st.success(
+        "Ticketmaster event discovery is connected. Event metadata and event links are being used by KickSeatz."
+    )
+else:
+    st.info(
+        "KickSeatz is running in local/demo inventory mode for seat-level ticket selection. "
+        "When authorized partner/Top Picks access is enabled, the app can be extended to use live seat-level inventory without changing the core recommendation system."
+    )
+
+st.caption(
+    "Current MVP scoring, price history, comparison, and recommendation logic remain usable while live seat-level access is pending."
 )
 
 # ============================================================
