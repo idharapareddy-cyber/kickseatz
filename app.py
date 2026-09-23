@@ -333,7 +333,19 @@ def load_inventory(path):
                 f"{', '.join(sorted(column_names))}"
             )
 
-        rows = conn.execute("""
+        optional_selects = []
+        if "source" in column_names:
+            optional_selects.append("source")
+        else:
+            optional_selects.append("NULL AS source")
+
+        if "last_updated" in column_names:
+            optional_selects.append("last_updated")
+        else:
+            optional_selects.append("NULL AS last_updated")
+
+        rows = conn.execute(
+            """
             SELECT
                 id,
                 week,
@@ -342,9 +354,13 @@ def load_inventory(path):
                 section,
                 row,
                 price,
-                quantity AS available_quantity
+                quantity AS available_quantity,
+                {optional_selects}
             FROM ticket_inventory
-        """).fetchall()
+            """.format(
+                optional_selects=",\n                ".join(optional_selects)
+            )
+        ).fetchall()
 
     except sqlite3.Error as e:
         raise RuntimeError(
@@ -370,6 +386,8 @@ def load_inventory(path):
                     "row": r[5],
                     "price": float(r[6]),
                     "available_quantity": int(r[7]),
+                    "source": r[8],
+                    "last_updated": r[9],
                 }
             )
         except (TypeError, ValueError) as e:
@@ -1151,6 +1169,11 @@ def get_reasons(
             f"Game Quality score."
         )
 
+    elif priority == "Best Seats":
+        reasons.append(
+            f"Section {ticket['section']} and Row {ticket['row']} "
+            f"drive a {seat_score}/100 Seat Quality score."
+        )
     else:
         reasons.append(
             f"It combines a {game_score}/100 Game Quality "
@@ -1461,6 +1484,8 @@ def build_candidate_csv(candidates, limit=15):
         "Price Score",
         "Seat Quality",
         "Availability",
+        "Inventory Source",
+        "Inventory Last Updated",
         "Ticketmaster Link",
     ])
 
@@ -1482,6 +1507,8 @@ def build_candidate_csv(candidates, limit=15):
             rating["price"],
             rating["seat"],
             rating["availability"],
+            t.get("source", ""),
+            t.get("last_updated", ""),
             g.get("ticketmaster_url", ""),
         ])
 
@@ -1490,13 +1517,39 @@ def build_candidate_csv(candidates, limit=15):
 
 def get_ticketmaster_status_text(game):
     code = str(game.get("ticketmaster_status", "")).upper()
-    if code == "onsale":
+    if code == "ONSALE":
         return "Ticketmaster event found • on sale"
     if code:
         return f"Ticketmaster event found • status: {code}"
     if game.get("ticketmaster_event_id"):
         return "Ticketmaster event found"
     return "Ticketmaster event link not available"
+
+
+def get_data_freshness():
+    """Return simple, honest freshness information for the MVP data sources."""
+    db_modified = None
+    try:
+        db_modified = datetime.fromtimestamp(
+            os.path.getmtime(DB_PATH)
+        )
+    except (OSError, ValueError):
+        pass
+
+    inventory_updates = []
+    for t in inventory:
+        raw = t.get("last_updated")
+        if not raw:
+            continue
+        try:
+            inventory_updates.append(
+                datetime.fromisoformat(str(raw).replace("Z", "+00:00")).replace(tzinfo=None)
+            )
+        except (ValueError, TypeError):
+            continue
+
+    latest_inventory = max(inventory_updates) if inventory_updates else db_modified
+    return latest_inventory
 
 
 # ============================================================
@@ -1741,6 +1794,9 @@ label = {
 
     "Best Game":
         "🔥 Best Game",
+
+    "Best Seats":
+        "💺 Best Seats",
 }[priority]
 
 st.markdown(
@@ -1806,6 +1862,22 @@ with left:
         st.info(
             "Ticketmaster event link is unavailable for this matchup."
         )
+
+    if game.get("seatmap_url"):
+        st.link_button(
+            "🗺️ View Seat Map",
+            game["seatmap_url"],
+        )
+
+    with st.expander("Ticket Details"):
+        st.write(f"Inventory Ticket ID: `{ticket.get('id')}`")
+        st.write(f"Section: **{ticket.get('section')}**")
+        st.write(f"Row: **{ticket.get('row')}**")
+        st.write(f"Available: **{ticket.get('available_quantity')}**")
+        if ticket.get("source"):
+            st.write(f"Inventory source: **{ticket.get('source')}**")
+        if ticket.get("last_updated"):
+            st.write(f"Inventory timestamp: **{ticket.get('last_updated')}**")
 
 with right:
 
@@ -2434,6 +2506,16 @@ for i, (col, option) in enumerate(
         st.markdown(
             f"### ${option_ticket['price']:.0f}/ticket"
         )
+        st.caption(
+            f"${float(option_ticket['price']) * ticket_count:.0f} total for {ticket_count} ticket(s)"
+        )
+
+        if option_game.get("ticketmaster_url"):
+            st.link_button(
+                "View Ticketmaster Event",
+                option_game["ticketmaster_url"],
+                key=f"top3_tm_{i}_{option_ticket['id']}",
+            )
 
         st.markdown(
             f'<div class="compare-score">'
@@ -2845,7 +2927,7 @@ if len(rate_options) >= 2:
         )
 
 st.caption(
-    "Core MVP features: Smart Finder • Game Selector • Rate My Ticket "
+    "Core MVP features: Smart Finder • Game Selector • Best Seats • Rate My Ticket "
     "• Deal Analysis • Price Benchmark • Ticket Comparison • CSV Export"
 )
 
@@ -2873,6 +2955,46 @@ st.caption(
 )
 
 # ============================================================
+# DATA FRESHNESS
+# ============================================================
+
+st.markdown(
+    '<div class="section-title">🕒 Data Freshness</div>',
+    unsafe_allow_html=True,
+)
+
+freshness = get_data_freshness()
+fresh_col1, fresh_col2, fresh_col3 = st.columns(3)
+
+with fresh_col1:
+    if freshness:
+        st.metric(
+            "Inventory Data",
+            freshness.strftime("%b %d, %Y"),
+        )
+        st.caption(
+            freshness.strftime("Last detected update: %I:%M %p")
+        )
+    else:
+        st.metric("Inventory Data", "Timestamp unavailable")
+        st.caption("The database does not expose a usable update timestamp.")
+
+with fresh_col2:
+    st.metric("Ticketmaster Metadata", "≤ 5 min cache")
+    st.caption(
+        "Event discovery is cached for performance and may be slightly older than a live request."
+    )
+
+with fresh_col3:
+    st.metric(
+        "Live Seat Inventory",
+        "Pending access",
+    )
+    st.caption(
+        "Seat-level inventory will use authorized partner access when available."
+    )
+
+# ============================================================
 # DATA NOTICE
 # ============================================================
 
@@ -2894,64 +3016,71 @@ st.caption(
 # DEBUG
 # ============================================================
 
-with st.expander(
-    "Developer Debug Information"
-):
+show_debug = st.sidebar.checkbox(
+    "Developer mode",
+    value=False,
+    help="Show database paths and technical diagnostics."
+)
 
-    st.write(
-        f"Database path: {DB_PATH}"
-    )
+if show_debug:
+    with st.expander(
+        "Developer Debug Information"
+    ):
 
-    st.write(
-        f"Master JSON path: {MASTER_DATA_PATH}"
-    )
-
-    st.write(
-        f"Inventory rows loaded: {len(inventory)}"
-    )
-
-    st.write(
-        f"Budget: ${budget}"
-    )
-
-    st.write(
-        f"Requested tickets: {ticket_count}"
-    )
-
-    st.write(
-        f"Priority: {priority}"
-    )
-
-    st.write(
-        f"Eligible tickets: {len(eligible_tickets)}"
-    )
-
-    st.write(
-        f"Recommended ticket ID: {ticket['id']}"
-    )
-
-    st.write(
-        f"Recommended score: {score}"
-    )
-
-    st.write(
-        "Loaded inventory:"
-    )
-
-    for t in inventory:
-
-        game = get_game_by_week(
-            t.get("week")
+        st.write(
+            f"Database path: {DB_PATH}"
         )
 
         st.write(
-            f"ID {t['id']} | "
-            f"Week {t['week']} | "
-            f"Opponent: {t['opponent']} | "
-            f"Section {t['section']} "
-            f"Row {t['row']} | "
-            f"${t['price']:.0f} | "
-            f"{t['available_quantity']} available | "
-            f"Game lookup: "
-            f"{'FOUND' if game else 'NOT FOUND'}"
+            f"Master JSON path: {MASTER_DATA_PATH}"
         )
+
+        st.write(
+            f"Inventory rows loaded: {len(inventory)}"
+        )
+
+        st.write(
+            f"Budget: ${budget}"
+        )
+
+        st.write(
+            f"Requested tickets: {ticket_count}"
+        )
+
+        st.write(
+            f"Priority: {priority}"
+        )
+
+        st.write(
+            f"Eligible tickets: {len(eligible_tickets)}"
+        )
+
+        st.write(
+            f"Recommended ticket ID: {ticket['id']}"
+        )
+
+        st.write(
+            f"Recommended score: {score}"
+        )
+
+        st.write(
+            "Loaded inventory:"
+        )
+
+        for t in inventory:
+
+            game = get_game_by_week(
+                t.get("week")
+            )
+
+            st.write(
+                f"ID {t['id']} | "
+                f"Week {t['week']} | "
+                f"Opponent: {t['opponent']} | "
+                f"Section {t['section']} "
+                f"Row {t['row']} | "
+                f"${t['price']:.0f} | "
+                f"{t['available_quantity']} available | "
+                f"Game lookup: "
+                f"{'FOUND' if game else 'NOT FOUND'}"
+            )
