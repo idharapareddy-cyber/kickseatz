@@ -439,7 +439,7 @@ st.markdown("""
 .hero .tagline { color:#e8edf5; font-size:15px; max-width:680px; }
 .section-title { margin:26px 0 12px; padding:0 0 8px 12px; border-left:4px solid var(--ks-red);
     border-bottom:1px solid var(--ks-border); color:var(--ks-ink); font-size:1.45rem; line-height:1.2; font-weight:850; letter-spacing:-.015em; }
-.matchup-card { min-height:190px; padding:18px; border:1px solid var(--ks-border); border-radius:20px;
+.matchup-card { content-visibility:auto; contain-intrinsic-size:190px; min-height:190px; padding:18px; border:1px solid var(--ks-border); border-radius:20px;
     background:linear-gradient(145deg,#fff 0%,#f8fafc 100%); box-shadow:0 8px 24px rgba(15,23,42,.07); margin-bottom:14px; }
 .matchup-label { color:var(--ks-muted); font-size:11px; font-weight:800; letter-spacing:.13em; text-transform:uppercase; margin-bottom:10px; }
 .matchup-teams { display:flex; align-items:center; justify-content:center; gap:14px; min-height:82px; }
@@ -459,7 +459,7 @@ st.markdown("""
 button,[data-testid="stButton"] button,[data-testid="stDownloadButton"] button,[data-baseweb="select"]>div,[data-testid="stSlider"] [role="slider"] { min-height:44px; }
 [data-testid="stButton"] button,[data-testid="stDownloadButton"] button { border-radius:12px; font-weight:700; }
 h1,h2,h3 { letter-spacing:-.015em; }
-@media (max-width:768px) { .hero{padding:24px 20px;border-radius:18px;} .hero h1{font-size:36px;} .hero p{font-size:15px;} .section-title{font-size:20px;margin-top:22px;} .matchup-card{min-height:176px;padding:15px;} .matchup-team{width:82px;} .matchup-team img{width:50px;height:50px;} div[data-testid="stMetricValue"]{font-size:1.2rem;} }
+@media (max-width:768px) { .hero{padding:24px 20px;border-radius:18px;} .hero h1{font-size:36px;} .hero p{font-size:15px;} .section-title{font-size:20px;margin-top:22px;} .matchup-card{min-height:176px;contain-intrinsic-size:176px;padding:15px;} .matchup-team{width:82px;} .matchup-team img{width:50px;height:50px;} div[data-testid="stMetricValue"]{font-size:1.2rem;} }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1867,9 +1867,9 @@ def render_matchup_card(game_item):
 <div class="matchup-card">
   <div class="matchup-label">Week {week} • Upcoming matchup</div>
   <div class="matchup-teams">
-    <div class="matchup-team"><img src="{get_nfl_logo_url('Atlanta Falcons')}" alt="Atlanta Falcons logo" loading="lazy"><span>Falcons</span></div>
+    <div class="matchup-team"><img src="{get_nfl_logo_url('Atlanta Falcons')}" alt="Atlanta Falcons logo" width="58" height="58" loading="lazy" decoding="async" fetchpriority="low"><span>Falcons</span></div>
     <div class="matchup-vs">VS</div>
-    <div class="matchup-team"><img src="{get_nfl_logo_url(opponent)}" alt="{opponent} logo" loading="lazy"><span>{opponent}</span></div>
+    <div class="matchup-team"><img src="{get_nfl_logo_url(opponent)}" alt="{opponent} logo" width="58" height="58" loading="lazy" decoding="async" fetchpriority="low"><span>{opponent}</span></div>
   </div>
   <div class="matchup-meta">{game_date} • {location}</div>
 </div>
@@ -2116,7 +2116,8 @@ def get_schematic_seat_map_svg(ticket):
             Schematic only — not to scale
         </div>
         <svg viewBox="0 0 300 320" width="100%" role="img"
-             aria-label="Schematic seating zone preview for Section {section}">
+             aria-labelledby="seat-map-title-{section}">
+            <title id="seat-map-title-{section}">Schematic seating zone preview for Section {section}</title>
             <rect x="115" y="125" width="70" height="70" rx="16"
                   fill="#111111" opacity=".92"/>
             <text x="150" y="157" text-anchor="middle"
@@ -2426,10 +2427,45 @@ def clear_app_cache_and_rerun():
 # HERO
 # ============================================================
 
-st.markdown(
-    '<meta name="description" content="KickSeatz is a smart sports ticket finder that analyzes price, seats, game quality, availability, and ticket value for Atlanta Falcons tickets.">',
-    unsafe_allow_html=True,
+# Streamlit owns the document <head>, so set the SEO metadata and main landmark
+# from a tiny Components v2 helper instead of placing <meta> inside the app body.
+# Components v2 is available in the Streamlit version used by KickSeatz.
+_kickseatz_page_helper = st.components.v2.component(
+    name="kickseatz_page_semantics",
+    js="""
+export default function(component) {
+  const applyPageSemantics = () => {
+    const description =
+      "KickSeatz is a smart sports ticket finder that analyzes price, seats, game quality, availability, and ticket value for Atlanta Falcons tickets.";
+
+    let meta = document.head.querySelector('meta[name="description"]');
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.setAttribute("name", "description");
+      document.head.appendChild(meta);
+    }
+    meta.setAttribute("content", description);
+
+    const main =
+      document.querySelector('[data-testid="stMain"]') ||
+      document.querySelector('[data-testid="stAppViewContainer"] .main') ||
+      document.querySelector("main");
+
+    if (main) {
+      main.setAttribute("role", "main");
+      main.setAttribute("aria-label", "KickSeatz ticket finder");
+    }
+  };
+
+  applyPageSemantics();
+  const observer = new MutationObserver(applyPageSemantics);
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+
+  return () => observer.disconnect();
+};
+""",
 )
+_kickseatz_page_helper()
 
 st.markdown("""
 <div class="hero">
@@ -2818,10 +2854,10 @@ with left:
     recommendation_opponent = display_team_name(game.get("opponent", "Unknown"))
     st.markdown(
         f"""<div class=\"recommendation-matchup\">
-            <img src=\"{get_nfl_logo_url('Atlanta Falcons')}\" alt=\"Atlanta Falcons logo\">
+            <img src=\"{get_nfl_logo_url('Atlanta Falcons')}\" alt=\"Atlanta Falcons logo\" width=\"46\" height=\"46\" decoding=\"async\" fetchpriority=\"low\">
             <span class=\"team-name\">Atlanta Falcons</span>
             <span class=\"versus\">VS</span>
-            <img src=\"{get_nfl_logo_url(recommendation_opponent)}\" alt=\"{recommendation_opponent} logo\">
+            <img src=\"{get_nfl_logo_url(recommendation_opponent)}\" alt=\"{recommendation_opponent} logo\" width=\"46\" height=\"46\" decoding=\"async\" fetchpriority=\"low\">
             <span class=\"team-name\">{recommendation_opponent}</span>
         </div>""",
         unsafe_allow_html=True,
