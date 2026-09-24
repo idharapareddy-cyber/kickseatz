@@ -2571,9 +2571,12 @@ with left:
         unsafe_allow_html=True,
     )
 
-    st.markdown(
+    # Render the SVG as a dedicated HTML component so Streamlit does not
+    # expose the SVG/HTML markup as visible text.
+    st.components.v1.html(
         get_schematic_seat_map_svg(ticket),
-        unsafe_allow_html=True,
+        height=360,
+        scrolling=False,
     )
 
     if game.get("seatmap_url"):
