@@ -12,13 +12,6 @@ import requests
 import streamlit as st
 
 # Streamlit page configuration must happen before other Streamlit UI calls.
-st.set_page_config(
-    page_title="KickSeatz",
-    page_icon="🏟️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
 TICKETMASTER_API_KEY = st.secrets.get("TICKETMASTER_API_KEY", "")
 
 
@@ -41,8 +34,11 @@ TOP_PICKS_ENABLED = str(
 
 
 def _add_api_key_to_image_url(url, api_key):
-    """Return image URL without exposing the Ticketmaster API key to the browser."""
-    return url
+    if not url or not api_key:
+        return url
+
+    separator = "&" if "?" in str(url) else "?"
+    return f"{url}{separator}{urlencode({'apikey': api_key})}"
 
 
 @st.cache_data(ttl=60)
@@ -169,8 +165,14 @@ def load_top_picks(
                     "face_value": face_value,
                     "currency": currency,
                     "offer_name": offer_name,
-                    "snapshot_url": pick.get("snapshotImageUrl"),
-                    "vfs_url": pick.get("largeVFSImageUrl"),
+                    "snapshot_url": _add_api_key_to_image_url(
+                        pick.get("snapshotImageUrl"),
+                        TOP_PICKS_API_KEY,
+                    ),
+                    "vfs_url": _add_api_key_to_image_url(
+                        pick.get("largeVFSImageUrl"),
+                        TOP_PICKS_API_KEY,
+                    ),
                 }
             )
 
@@ -343,6 +345,13 @@ def enrich_games_with_ticketmaster(
 # KICKSEATZ — SMART SPORTS TICKET FINDER
 # ============================================================
 
+st.set_page_config(
+    page_title="KickSeatz | Smart Sports Ticket Finder",
+    page_icon="🏟️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
 # ============================================================
 # PATHS
 # ============================================================
@@ -412,97 +421,45 @@ MASTER_DATA_PATH = find_file(
 
 st.markdown("""
 <style>
-
-.hero {
-    padding: 30px 34px;
-    border-radius: 20px;
-    background: linear-gradient(135deg, #a71930 0%, #111111 100%);
-    color: white;
-    margin-bottom: 24px;
-    box-shadow: 0 8px 28px rgba(0,0,0,.12);
+:root {
+    --ks-red:#a71930; --ks-gold:#d6a23a; --ks-ink:#0b0d12;
+    --ks-muted:#64748b; --ks-border:rgba(100,116,139,.18);
 }
-
-.hero h1 {
-    font-size: 46px;
-    margin: 0 0 4px 0;
-    font-weight: 850;
-}
-
-.hero p {
-    margin: 5px 0;
-    font-size: 18px;
-}
-
-.hero .tagline {
-    color: #f1f5f9;
-    font-size: 15px;
-}
-
-.mobile-note {
-    font-size: 0.85rem;
-}
-
-.feature-card {
-    border: 1px solid rgba(100,116,139,.22);
-    border-radius: 16px;
-    padding: 16px 18px;
-    margin: 8px 0;
-    background: rgba(255,255,255,.92);
-}
-
-.seat-map-card {
-    border: 1px solid rgba(100,116,139,.25);
-    border-radius: 18px;
-    padding: 14px;
-    background: #fafafa;
-}
-
-.watch-card {
-    border: 1px solid rgba(167,25,48,.28);
-    border-radius: 16px;
-    padding: 16px 18px;
-    margin: 8px 0;
-    background: rgba(167,25,48,.035);
-}
-
-.status-pill {
-    display: inline-block;
-    padding: 5px 10px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: .02em;
-    background: #f1f5f9;
-}
-
-.small-muted {
-    color: #64748b;
-    font-size: 13px;
-}
-
-@media (max-width: 768px) {
-    .hero {
-        padding: 22px 20px;
-        border-radius: 16px;
-    }
-
-    .hero h1 {
-        font-size: 34px;
-    }
-
-    .hero p {
-        font-size: 15px;
-    }
-
-    .section-title {
-        font-size: 20px;
-    }
-
-    div[data-testid="stMetricValue"] {
-        font-size: 1.25rem;
-    }
-}
-
+.hero { position:relative; overflow:hidden; padding:34px 38px; border-radius:24px;
+    background:radial-gradient(circle at 92% 18%,rgba(214,162,58,.30),transparent 24%),
+    radial-gradient(circle at 75% 100%,rgba(167,25,48,.42),transparent 34%),
+    linear-gradient(135deg,#0a0c10 0%,#171b24 52%,#a71930 100%); color:white;
+    margin-bottom:22px; border:1px solid rgba(255,255,255,.10);
+    box-shadow:0 16px 40px rgba(15,23,42,.18); }
+.hero::after { content:""; position:absolute; right:-70px; top:-85px; width:230px; height:230px;
+    border:1px solid rgba(255,255,255,.12); border-radius:50%;
+    box-shadow:0 0 0 24px rgba(255,255,255,.025),0 0 0 48px rgba(255,255,255,.018); }
+.hero h1 { font-size:48px; line-height:1; margin:0 0 7px; font-weight:900; letter-spacing:-.035em; position:relative; z-index:1; }
+.hero p { margin:6px 0; font-size:18px; position:relative; z-index:1; }
+.hero .tagline { color:#e8edf5; font-size:15px; max-width:680px; }
+.section-title { margin:26px 0 12px; padding:0 0 8px 12px; border-left:4px solid var(--ks-red);
+    border-bottom:1px solid var(--ks-border); color:var(--ks-ink); font-size:1.45rem; line-height:1.2; font-weight:850; letter-spacing:-.015em; }
+.matchup-card { min-height:190px; padding:18px; border:1px solid var(--ks-border); border-radius:20px;
+    background:linear-gradient(145deg,#fff 0%,#f8fafc 100%); box-shadow:0 8px 24px rgba(15,23,42,.07); margin-bottom:14px; }
+.matchup-label { color:var(--ks-muted); font-size:11px; font-weight:800; letter-spacing:.13em; text-transform:uppercase; margin-bottom:10px; }
+.matchup-teams { display:flex; align-items:center; justify-content:center; gap:14px; min-height:82px; }
+.matchup-team { display:flex; flex-direction:column; align-items:center; gap:7px; width:96px; text-align:center; font-weight:800; font-size:12px; }
+.matchup-team img { width:58px; height:58px; object-fit:contain; }
+.matchup-vs { color:var(--ks-red); font-weight:900; font-size:12px; }
+.matchup-meta { text-align:center; color:var(--ks-muted); font-size:12px; margin-top:12px; }
+ .recommendation-matchup { display:flex; align-items:center; gap:12px; margin:8px 0 10px; }
+.recommendation-matchup img { width:46px; height:46px; object-fit:contain; }
+.recommendation-matchup .team-name { font-weight:800; font-size:14px; }
+.recommendation-matchup .versus { color:var(--ks-red); font-size:11px; font-weight:900; letter-spacing:.08em; }
+.feature-card { border:1px solid var(--ks-border); border-radius:16px; padding:16px 18px; margin:8px 0; background:rgba(255,255,255,.94); box-shadow:0 5px 18px rgba(15,23,42,.05); }
+.seat-map-card { border:1px solid var(--ks-border); border-radius:18px; padding:14px; background:#fafafa; }
+.watch-card { border:1px solid rgba(167,25,48,.28); border-radius:16px; padding:16px 18px; margin:8px 0; background:linear-gradient(135deg,rgba(167,25,48,.055),rgba(214,162,58,.045)); }
+.status-pill { display:inline-block; padding:6px 11px; border-radius:999px; font-size:12px; font-weight:750; letter-spacing:.02em; background:#f1f5f9; }
+.small-muted { color:#64748b; font-size:13px; }
+button,[data-testid="stButton"] button,[data-testid="stDownloadButton"] button,[data-baseweb="select"]>div,[data-testid="stSlider"] [role="slider"] { min-height:44px; }
+[data-testid="stButton"] button,[data-testid="stDownloadButton"] button { border-radius:12px; font-weight:700; }
+h1,h2,h3 { letter-spacing:-.015em; }
+@media (max-width:768px) { .hero{padding:24px 20px;border-radius:18px;} .hero h1{font-size:36px;} .hero p{font-size:15px;} .section-title{font-size:20px;margin-top:22px;} .matchup-card{min-height:176px;padding:15px;} .matchup-team{width:82px;} .matchup-team img{width:50px;height:50px;} div[data-testid="stMetricValue"]{font-size:1.2rem;} }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1163,11 +1120,9 @@ def calculate_opportunity_score(ticket, game, eligible_pairs, budget, ticket_cou
     else:
         seat_value_score = 50
 
-    if budget > 0 and current_price > 0:
-        # A ticket should not receive extra opportunity points merely for
-        # spending a fixed percentage of the user's budget. Reward lower
-        # spend while preserving value instead.
-        budget_efficiency_score = _clamp((budget / current_price) * 55)
+    if budget > 0:
+        utilization = current_price / budget
+        budget_efficiency_score = _clamp(100 - abs(utilization - 0.75) * 140)
     else:
         budget_efficiency_score = 50
 
@@ -1550,24 +1505,27 @@ def get_reasons(
 
     reasons = []
 
-    opponent_rank = OPPONENT_POWER_RANKINGS.get(
+    opponent_rating = OPPONENT_POWER_RANKINGS.get(
         opponent,
-        32
+        70
     )
 
-    if opponent_rank <= 10:
+    if opponent_rating >= 90:
         reasons.append(
-            f"{opponent} is Power Ranking #{opponent_rank}, a high-ranked matchup."
+            f"{opponent} has a strong opponent rating "
+            f"of {opponent_rating}/100."
         )
 
-    elif opponent_rank <= 20:
+    elif opponent_rating >= 80:
         reasons.append(
-            f"{opponent} is Power Ranking #{opponent_rank}, giving the matchup solid game-quality value."
+            f"{opponent} has an above-average opponent rating "
+            f"of {opponent_rating}/100."
         )
 
     else:
         reasons.append(
-            f"{opponent} is Power Ranking #{opponent_rank}."
+            f"{opponent} has an opponent rating of "
+            f"{opponent_rating}/100."
         )
 
     if game.get("home_game"):
@@ -1851,6 +1809,71 @@ def get_game_selector_options():
     valid_games = [g for g in games if isinstance(g, dict)]
     valid_games.sort(key=lambda g: normalize_week(g.get("week")) or 999)
     return valid_games
+
+
+NFL_LOGO_CODES = {
+    "Arizona Cardinals":"ari","Atlanta Falcons":"atl","Baltimore Ravens":"bal","Buffalo Bills":"buf",
+    "Carolina Panthers":"car","Chicago Bears":"chi","Cincinnati Bengals":"cin","Cleveland Browns":"cle",
+    "Dallas Cowboys":"dal","Denver Broncos":"den","Detroit Lions":"det","Green Bay Packers":"gb",
+    "Houston Texans":"hou","Indianapolis Colts":"ind","Jacksonville Jaguars":"jax","Kansas City Chiefs":"kc",
+    "Las Vegas Raiders":"lv","Los Angeles Chargers":"lac","Los Angeles Rams":"lar","Miami Dolphins":"mia",
+    "Minnesota Vikings":"min","New England Patriots":"ne","New Orleans Saints":"no","New York Giants":"nyg",
+    "New York Jets":"nyj","Philadelphia Eagles":"phi","Pittsburgh Steelers":"pit","San Francisco 49ers":"sf",
+    "Seattle Seahawks":"sea","Tampa Bay Buccaneers":"tb","Tennessee Titans":"ten","Washington Commanders":"wsh",
+}
+
+NFL_SHORT_NAMES = {
+    "ARI":"Arizona Cardinals","ATL":"Atlanta Falcons","BAL":"Baltimore Ravens","BUF":"Buffalo Bills",
+    "CAR":"Carolina Panthers","CHI":"Chicago Bears","CIN":"Cincinnati Bengals","CLE":"Cleveland Browns",
+    "DAL":"Dallas Cowboys","DEN":"Denver Broncos","DET":"Detroit Lions","GB":"Green Bay Packers",
+    "HOU":"Houston Texans","IND":"Indianapolis Colts","JAX":"Jacksonville Jaguars","KC":"Kansas City Chiefs",
+    "LV":"Las Vegas Raiders","LAC":"Los Angeles Chargers","LAR":"Los Angeles Rams","MIA":"Miami Dolphins",
+    "MIN":"Minnesota Vikings","NE":"New England Patriots","NO":"New Orleans Saints","NYG":"New York Giants",
+    "NYJ":"New York Jets","PHI":"Philadelphia Eagles","PIT":"Pittsburgh Steelers","SF":"San Francisco 49ers",
+    "SEA":"Seattle Seahawks","TB":"Tampa Bay Buccaneers","TEN":"Tennessee Titans","WAS":"Washington Commanders",
+}
+
+def get_nfl_logo_url(team_name):
+    name=str(team_name or "").strip()
+    code=NFL_LOGO_CODES.get(name)
+    if not code and len(name)<=3:
+        code=name.lower()
+    return f"https://a.espncdn.com/i/teamlogos/nfl/500/{code}.png" if code else ""
+
+def display_team_name(value):
+    text=str(value or "Unknown")
+    return NFL_SHORT_NAMES.get(text.upper(), text)
+
+def get_upcoming_games(limit=4):
+    games=get_game_selector_options()
+    today=datetime.now().date()
+    dated=[]
+    for game_item in games:
+        try:
+            parsed=datetime.fromisoformat(str(game_item.get("game_date")).replace("Z","+00:00")).date()
+        except (ValueError,TypeError):
+            continue
+        if parsed>=today:
+            dated.append((parsed,game_item))
+    dated.sort(key=lambda pair:pair[0])
+    return [g for _,g in dated[:limit]] if dated else games[:limit]
+
+def render_matchup_card(game_item):
+    opponent=display_team_name(game_item.get("opponent","Unknown"))
+    week=game_item.get("week","—")
+    game_date=str(game_item.get("game_date","Date unavailable"))
+    location="Mercedes-Benz Stadium" if bool(game_item.get("home_game",True)) else "Away game"
+    return f"""
+<div class="matchup-card">
+  <div class="matchup-label">Week {week} • Upcoming matchup</div>
+  <div class="matchup-teams">
+    <div class="matchup-team"><img src="{get_nfl_logo_url('Atlanta Falcons')}" alt="Atlanta Falcons logo" loading="lazy"><span>Falcons</span></div>
+    <div class="matchup-vs">VS</div>
+    <div class="matchup-team"><img src="{get_nfl_logo_url(opponent)}" alt="{opponent} logo" loading="lazy"><span>{opponent}</span></div>
+  </div>
+  <div class="matchup-meta">{game_date} • {location}</div>
+</div>
+"""
 
 
 def get_price_benchmark(ticket):
@@ -2403,6 +2426,11 @@ def clear_app_cache_and_rerun():
 # HERO
 # ============================================================
 
+st.markdown(
+    '<meta name="description" content="KickSeatz is a smart sports ticket finder that analyzes price, seats, game quality, availability, and ticket value for Atlanta Falcons tickets.">',
+    unsafe_allow_html=True,
+)
+
 st.markdown("""
 <div class="hero">
     <h1>🏟️ KickSeatz</h1>
@@ -2413,6 +2441,22 @@ st.markdown("""
     </p>
 </div>
 """, unsafe_allow_html=True)
+
+st.markdown(
+    '<h2 class="section-title">🏈 Upcoming Falcons Matchups</h2>',
+    unsafe_allow_html=True,
+)
+st.caption(
+    "A quick visual look at the next games in the KickSeatz schedule. Team logos identify the matchup."
+)
+upcoming_games = get_upcoming_games(limit=4)
+if upcoming_games:
+    matchup_columns = st.columns(2)
+    for matchup_index, matchup_game in enumerate(upcoming_games):
+        with matchup_columns[matchup_index % 2]:
+            st.markdown(render_matchup_card(matchup_game), unsafe_allow_html=True)
+else:
+    st.info("Upcoming matchup data is not available yet.")
 
 # ============================================================
 # SIDEBAR
@@ -2756,9 +2800,9 @@ label = {
 }[priority]
 
 st.markdown(
-    '<div class="section-title">'
+    '<h2 class="section-title">'
     'Your KickSeatz Recommendation'
-    '</div>',
+    '</h2>',
     unsafe_allow_html=True,
 )
 
@@ -2771,8 +2815,16 @@ with left:
         unsafe_allow_html=True,
     )
 
+    recommendation_opponent = display_team_name(game.get("opponent", "Unknown"))
     st.markdown(
-        f"### Atlanta Falcons vs {game['opponent']}"
+        f"""<div class=\"recommendation-matchup\">
+            <img src=\"{get_nfl_logo_url('Atlanta Falcons')}\" alt=\"Atlanta Falcons logo\">
+            <span class=\"team-name\">Atlanta Falcons</span>
+            <span class=\"versus\">VS</span>
+            <img src=\"{get_nfl_logo_url(recommendation_opponent)}\" alt=\"{recommendation_opponent} logo\">
+            <span class=\"team-name\">{recommendation_opponent}</span>
+        </div>""",
+        unsafe_allow_html=True,
     )
 
     game_type = (
@@ -2836,7 +2888,7 @@ with left:
             st.write(f"Inventory timestamp: **{get_last_updated_display(ticket.get('last_updated'))}**")
 
     st.markdown(
-        '<div class="section-title">🗺️ Seat Map & Live Picks</div>',
+        '<h2 class="section-title">🗺️ Seat Map & Live Picks</h2>',
         unsafe_allow_html=True,
     )
 
@@ -3026,7 +3078,7 @@ st.markdown(
 watch_status = get_watch_status(ticket)
 
 st.markdown(
-    '<div class="section-title">🔔 Price Watch</div>',
+    '<h2 class="section-title">🔔 Price Watch</h2>',
     unsafe_allow_html=True,
 )
 
@@ -3139,7 +3191,7 @@ st.caption(
 timing_advice = get_price_timing_advice(ticket)
 
 st.markdown(
-    '<div class="section-title">🧭 Historical Timing Signal</div>',
+    '<h2 class="section-title">🧭 Historical Timing Signal</h2>',
     unsafe_allow_html=True,
 )
 
@@ -3168,7 +3220,7 @@ best_opportunity = opportunity_candidates[0] if opportunity_candidates else reco
 best_opp = best_opportunity.get("opportunity", {})
 
 st.markdown(
-    '<div class="section-title">🔥 Opportunity Engine</div>',
+    '<h2 class="section-title">🔥 Opportunity Engine</h2>',
     unsafe_allow_html=True,
 )
 
@@ -3280,7 +3332,7 @@ with st.expander("How KickSeatz found this opportunity"):
 benchmark = get_price_benchmark(ticket)
 if benchmark:
     st.markdown(
-        '<div class="section-title">📈 Price Benchmark</div>',
+        '<h2 class="section-title">📈 Price Benchmark</h2>',
         unsafe_allow_html=True,
     )
 
@@ -3318,7 +3370,7 @@ cheaper_option, upgrade_option = get_budget_insights(
 
 if cheaper_option or upgrade_option:
     st.markdown(
-        '<div class="section-title">💡 What Your Budget Can Change</div>',
+        '<h2 class="section-title">💡 What Your Budget Can Change</h2>',
         unsafe_allow_html=True,
     )
 
@@ -3361,9 +3413,9 @@ if cheaper_option or upgrade_option:
 # ============================================================
 
 st.markdown(
-    '<div class="section-title">'
+    '<h2 class="section-title">'
     '🧠 Why KickSeatz Chose This Ticket'
-    '</div>',
+    '</h2>',
     unsafe_allow_html=True,
 )
 
@@ -3400,7 +3452,7 @@ if len(candidates) >= 2:
     ag = alternative["game"]
 
     st.markdown(
-        '<div class="section-title">🔄 Best Alternative</div>',
+        '<h2 class="section-title">🔄 Best Alternative</h2>',
         unsafe_allow_html=True,
     )
 
@@ -3579,7 +3631,7 @@ with b3:
 
     if not seat_notes:
         seat_notes.append(
-            "KickSeatz seat-quality heuristic based on section and row."
+            "Standard seat-quality rating based on section and row."
         )
 
     st.caption(
@@ -3645,9 +3697,9 @@ with b5:
 # ============================================================
 
 st.markdown(
-    '<div class="section-title">'
+    '<h2 class="section-title">'
     '📉 Price History'
-    '</div>',
+    '</h2>',
     unsafe_allow_html=True,
 )
 
@@ -3787,9 +3839,9 @@ else:
 # ============================================================
 
 st.markdown(
-    '<div class="section-title">'
+    '<h2 class="section-title">'
     '📊 Compare Your Top Options'
-    '</div>',
+    '</h2>',
     unsafe_allow_html=True,
 )
 
@@ -3895,7 +3947,7 @@ if len(candidates) > 3:
 
 if candidates:
     st.markdown(
-        '<div class="section-title">⬇️ Save Your Results</div>',
+        '<h2 class="section-title">⬇️ Save Your Results</h2>',
         unsafe_allow_html=True,
     )
     st.download_button(
@@ -3913,9 +3965,9 @@ if candidates:
 # ============================================================
 
 st.markdown(
-    '<div class="section-title">'
+    '<h2 class="section-title">'
     '🎟️ Rate My Ticket'
-    '</div>',
+    '</h2>',
     unsafe_allow_html=True,
 )
 
@@ -4104,14 +4156,15 @@ if rate_options:
 # ============================================================
 
 st.markdown(
-    '<div class="section-title">'
+    '<h2 class="section-title">'
     '⚖️ Compare Tickets'
-    '</div>',
+    '</h2>',
     unsafe_allow_html=True,
 )
 
 st.caption(
-    "Put up to three tickets head-to-head and compare their KickSeatz ratings."
+    "Put up to three tickets head-to-head and let "
+    "KickSeatz identify the strongest value."
 )
 
 if len(rate_options) >= 2:
@@ -4173,7 +4226,7 @@ if len(rate_options) >= 2:
                 )
 
                 rank_text = (
-                    "🏆 Highest Score"
+                    "🏆 Best Value"
                     if t["id"] == winner[0]["id"]
                     else f"Option {i}"
                 )
@@ -4216,7 +4269,7 @@ if len(rate_options) >= 2:
 
                 st.caption(
                     f"Seat: {r['seat']}/100 — "
-                    "KickSeatz seat-quality heuristic based on section and row."
+                    "based on section and row."
                 )
 
                 st.caption(
@@ -4240,7 +4293,7 @@ if len(rate_options) >= 2:
                 )
 
         st.success(
-            f"Highest-rated option in this comparison: "
+            f"KickSeatz's strongest value is "
             f"Falcons vs {winner[1]['opponent']} "
             f"at ${winner[0]['price']:.0f}/ticket "
             f"({winner[2]['score']}/100)."
@@ -4266,7 +4319,7 @@ st.caption(
 all_watches = get_all_price_watches()
 
 st.markdown(
-    '<div class="section-title">🔔 My Price Watches</div>',
+    '<h2 class="section-title">🔔 My Price Watches</h2>',
     unsafe_allow_html=True,
 )
 
@@ -4348,7 +4401,7 @@ st.caption(
 # ============================================================
 
 st.markdown(
-    '<div class="section-title">🔗 Live Ticketing Access</div>',
+    '<h2 class="section-title">🔗 Live Ticketing Access</h2>',
     unsafe_allow_html=True,
 )
 
@@ -4380,7 +4433,7 @@ st.caption(
 # ============================================================
 
 st.markdown(
-    '<div class="section-title">🕒 Data Freshness</div>',
+    '<h2 class="section-title">🕒 Data Freshness</h2>',
     unsafe_allow_html=True,
 )
 
@@ -4523,25 +4576,3 @@ if show_debug:
                 f"Game lookup: "
                 f"{'FOUND' if game else 'NOT FOUND'}"
             )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
