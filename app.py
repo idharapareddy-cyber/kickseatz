@@ -1087,6 +1087,187 @@ def calculate_budget_opportunity(
     return 90
 
 
+def _clamp(value, low=0, high=100):
+    return max(low, min(high, float(value)))
+
+
+def get_ticket_history_stats(ticket_id):
+    """Return observed price-history statistics for one ticket.
+
+    This function intentionally uses only recorded observations. It does not
+    predict future prices.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        rows = conn.execute(
+            """
+            SELECT price
+            FROM price_history
+            WHERE ticket_id = ?
+            ORDER BY recorded_at
+            """,
+            (ticket_id,),
+        ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    prices = [float(row[0]) for row in rows if row and row[0] is not None]
+    if not prices:
+        return {
+            "sample_size": 0,
+            "low": None,
+            "high": None,
+            "median": None,
+            "change": 0.0,
+        }
+
+    return {
+        "sample_size": len(prices),
+        "low": min(prices),
+        "high": max(prices),
+        "median": statistics.median(prices),
+        "change": prices[-1] - prices[0],
+    }
+
+
+def calculate_opportunity_score(ticket, game, eligible_pairs, budget, ticket_count):
+    """Find unusual value that a normal cheapest-ticket sort would miss.
+
+    The score is intentionally separate from the user's selected priority. It
+    combines relative price, seat value, budget efficiency, observed history,
+    and inventory scarcity. All signals are descriptive rather than predictive.
+    """
+    current_price = float(ticket.get("price", 0))
+    seat_score = calculate_seat_quality(ticket) * 10
+
+    same_game = [
+        t for t, g in eligible_pairs
+        if normalize_week(t.get("week")) == normalize_week(ticket.get("week"))
+        and int(t.get("available_quantity", 0)) >= ticket_count
+    ]
+    same_game_prices = [float(t.get("price", 0)) for t in same_game if float(t.get("price", 0)) > 0]
+
+    if same_game_prices:
+        median_price = statistics.median(same_game_prices)
+        relative_price_score = _clamp(50 + ((median_price - current_price) / median_price) * 180) if median_price else 50
+    else:
+        median_price = current_price
+        relative_price_score = 50
+
+    value_ratios = []
+    for t, _g in eligible_pairs:
+        price = float(t.get("price", 0))
+        if price > 0:
+            value_ratios.append((calculate_seat_quality(t) * 10) / price)
+
+    candidate_ratio = (seat_score / current_price) if current_price > 0 else 0
+    if value_ratios and candidate_ratio > 0:
+        better_or_equal = sum(1 for ratio in value_ratios if ratio <= candidate_ratio)
+        seat_value_score = (better_or_equal / len(value_ratios)) * 100
+    else:
+        seat_value_score = 50
+
+    if budget > 0:
+        utilization = current_price / budget
+        budget_efficiency_score = _clamp(100 - abs(utilization - 0.75) * 140)
+    else:
+        budget_efficiency_score = 50
+
+    history = get_ticket_history_stats(ticket.get("id"))
+    if history["sample_size"] >= 2 and history["median"]:
+        history_score = _clamp(50 + ((history["median"] - current_price) / history["median"]) * 180)
+    else:
+        history_score = 50
+
+    available = int(ticket.get("available_quantity", 0))
+    if available <= ticket_count:
+        scarcity_score = 90
+    elif available <= ticket_count + 1:
+        scarcity_score = 78
+    elif available <= 4:
+        scarcity_score = 62
+    else:
+        scarcity_score = 45
+
+    opportunity_score = round(
+        relative_price_score * 0.30
+        + seat_value_score * 0.30
+        + budget_efficiency_score * 0.15
+        + history_score * 0.15
+        + scarcity_score * 0.10
+    )
+
+    if opportunity_score >= 85:
+        label = "Hidden Opportunity"
+    elif opportunity_score >= 70:
+        label = "Strong Opportunity"
+    elif opportunity_score >= 55:
+        label = "Worth Considering"
+    else:
+        label = "Standard Market Value"
+
+    reasons = []
+    if current_price < median_price:
+        reasons.append(f"${median_price - current_price:.0f} below the same-game median")
+    if seat_value_score >= 75:
+        reasons.append("strong seat quality for the price")
+    if history["sample_size"] >= 2 and history["median"] and current_price < history["median"]:
+        reasons.append("below this ticket's observed historical median")
+    if available <= ticket_count + 1:
+        reasons.append("limited inventory for your requested quantity")
+    if not reasons:
+        reasons.append("balanced price, seat, budget, and availability signals")
+
+    return {
+        "score": int(_clamp(opportunity_score)),
+        "label": label,
+        "same_game_median": round(median_price, 2),
+        "relative_price_score": round(relative_price_score),
+        "seat_value_score": round(seat_value_score),
+        "budget_efficiency_score": round(budget_efficiency_score),
+        "history_score": round(history_score),
+        "scarcity_score": round(scarcity_score),
+        "history": history,
+        "reason": " • ".join(reasons[:2]),
+    }
+
+
+def get_opportunity_upgrade(candidate, candidates):
+    """Identify the cheapest meaningful upgrade from the selected ticket."""
+    base_ticket = candidate["ticket"]
+    base_seat = calculate_seat_quality(base_ticket) * 10
+    base_price = float(base_ticket["price"])
+
+    upgrades = []
+    for other in candidates:
+        if other["ticket"]["id"] == base_ticket["id"]:
+            continue
+        other_price = float(other["ticket"]["price"])
+        other_seat = calculate_seat_quality(other["ticket"]) * 10
+        if other_price <= base_price or other_seat <= base_seat:
+            continue
+        extra_cost = other_price - base_price
+        seat_gain = other_seat - base_seat
+        efficiency = seat_gain / extra_cost if extra_cost > 0 else 0
+        upgrades.append((efficiency, extra_cost, seat_gain, other))
+
+    if not upgrades:
+        return None
+
+    upgrades.sort(key=lambda x: (x[0], x[2], -x[1]), reverse=True)
+    _efficiency, extra_cost, seat_gain, upgrade = upgrades[0]
+    return {
+        "candidate": upgrade,
+        "extra_cost": round(extra_cost, 2),
+        "seat_gain": round(seat_gain),
+    }
+
+
 def calculate_ticket_score(
     ticket,
     game,
@@ -1265,6 +1446,27 @@ def score_candidates(
                     "score": score,
                 }
             )
+
+    # Opportunity analysis is deliberately calculated after the candidate
+    # pool is known, so it can compare each ticket against the actual options
+    # available to this user rather than using an arbitrary fixed benchmark.
+    eligible_pairs = get_eligible_tickets(
+        budget,
+        ticket_count,
+        selected_week,
+        seat_area_filter,
+        min_seat_quality,
+        rivals_only,
+    )
+
+    for candidate in candidates:
+        candidate["opportunity"] = calculate_opportunity_score(
+            candidate["ticket"],
+            candidate["game"],
+            eligible_pairs,
+            budget,
+            ticket_count,
+        )
 
     if priority == "Lowest Price":
 
@@ -1726,6 +1928,8 @@ def build_candidate_csv(candidates, limit=15):
         "Price Per Ticket",
         "Tickets Available",
         "KickSeatz Score",
+        "Opportunity Score",
+        "Opportunity Label",
         "Game Quality",
         "Price Score",
         "Seat Quality",
@@ -1749,6 +1953,8 @@ def build_candidate_csv(candidates, limit=15):
             round(float(t.get("price", 0)), 2),
             t.get("available_quantity"),
             candidate["score"],
+            candidate.get("opportunity", {}).get("score", ""),
+            candidate.get("opportunity", {}).get("label", ""),
             rating["game"],
             rating["price"],
             rating["seat"],
@@ -2100,6 +2306,73 @@ def get_price_timing_snapshot(ticket):
     }
 
 
+def get_price_timing_advice(ticket):
+    """Summarize historical price position without forecasting future prices."""
+    history_rows = get_price_history_for_ticket(ticket["id"])
+    prices = [float(row[0]) for row in history_rows]
+
+    if len(prices) < 2:
+        return {
+            "headline": "⏳ Not enough history yet",
+            "detail": (
+                "KickSeatz does not have enough recorded snapshots to make a useful "
+                "historical timing assessment."
+            ),
+            "tone": "info",
+        }
+
+    current = prices[-1]
+    previous = prices[-2]
+    low = min(prices)
+    high = max(prices)
+    median = statistics.median(prices)
+
+    distance_from_low = ((current - low) / low * 100) if low > 0 else 0
+    distance_from_median = ((current - median) / median * 100) if median > 0 else 0
+
+    if current <= low:
+        headline = "🟢 At the lowest recorded price"
+        detail = (
+            f"The current price of ${current:.0f} matches the lowest price "
+            f"KickSeatz has recorded for this ticket."
+        )
+        tone = "success"
+    elif current <= low * 1.05:
+        headline = "🟢 Near the lowest recorded price"
+        detail = (
+            f"The current price of ${current:.0f} is only "
+            f"{distance_from_low:.1f}% above the observed low of ${low:.0f}."
+        )
+        tone = "success"
+    elif current < median and current <= previous:
+        headline = "🟢 Historically favorable"
+        detail = (
+            f"The current price of ${current:.0f} is below the recorded median "
+            f"of ${median:.0f} and did not rise in the latest snapshot."
+        )
+        tone = "success"
+    elif current > median * 1.10:
+        headline = "🟡 Historically higher"
+        detail = (
+            f"The current price of ${current:.0f} is {max(0, distance_from_median):.1f}% "
+            f"above the recorded median of ${median:.0f}."
+        )
+        tone = "warning"
+    else:
+        headline = "🔵 Mixed historical signal"
+        detail = (
+            f"The current price of ${current:.0f} sits between the observed low "
+            f"(${low:.0f}) and high (${high:.0f}); KickSeatz does not predict future prices."
+        )
+        tone = "info"
+
+    return {
+        "headline": headline,
+        "detail": detail,
+        "tone": tone,
+    }
+
+
 def get_watch_status(ticket):
     watch = get_price_watch(ticket["id"])
 
@@ -2172,6 +2445,12 @@ ticket_count = st.sidebar.selectbox(
     [1, 2, 3, 4],
     index=1,
 )
+
+total_budget = budget * ticket_count
+st.sidebar.caption(
+    f"Maximum group spend: ${total_budget:.0f}"
+)
+
 
 priority = st.sidebar.radio(
     "What matters most?",
@@ -2862,6 +3141,147 @@ st.caption(
 st.caption(
     "Historical signal only — it describes recorded prices and does not predict future prices."
 )
+
+# ============================================================
+# HISTORICAL TIMING SIGNAL
+# ============================================================
+
+timing_advice = get_price_timing_advice(ticket)
+
+st.markdown(
+    '<div class="section-title">🧭 Historical Timing Signal</div>',
+    unsafe_allow_html=True,
+)
+
+if timing_advice["tone"] == "success":
+    st.success(f"{timing_advice['headline']} — {timing_advice['detail']}")
+elif timing_advice["tone"] == "warning":
+    st.warning(f"{timing_advice['headline']} — {timing_advice['detail']}")
+else:
+    st.info(f"{timing_advice['headline']} — {timing_advice['detail']}")
+
+st.caption(
+    "This is a descriptive historical signal based only on recorded KickSeatz snapshots; it is not a buy/sell prediction."
+)
+
+# ============================================================
+# OPPORTUNITY ENGINE
+# ============================================================
+
+recommendation_opportunity = recommendation.get("opportunity", {})
+opportunity_candidates = sorted(
+    candidates,
+    key=lambda item: item.get("opportunity", {}).get("score", 0),
+    reverse=True,
+)
+best_opportunity = opportunity_candidates[0] if opportunity_candidates else recommendation
+best_opp = best_opportunity.get("opportunity", {})
+
+st.markdown(
+    '<div class="section-title">🔥 Opportunity Engine</div>',
+    unsafe_allow_html=True,
+)
+
+st.caption(
+    "KickSeatz looks for value that a simple cheapest-ticket search can miss. "
+    "This signal compares the actual eligible market, seat value, budget efficiency, "
+    "observed price history, and current inventory. It is descriptive, not a prediction."
+)
+
+opp_col1, opp_col2, opp_col3, opp_col4 = st.columns(4)
+
+with opp_col1:
+    st.metric(
+        "Opportunity Score",
+        f"{best_opp.get('score', 0)}/100",
+    )
+    st.caption(best_opp.get("label", "Market Value"))
+
+with opp_col2:
+    st.metric(
+        "Same-Game Median",
+        f"${best_opp.get('same_game_median', float(best_opportunity['ticket']['price'])):.0f}",
+    )
+    st.caption(
+        f"Selected: ${float(best_opportunity['ticket']['price']):.0f}/ticket"
+    )
+
+with opp_col3:
+    st.metric(
+        "Seat Value",
+        f"{best_opp.get('seat_value_score', 0)}/100",
+    )
+    st.caption("Relative seat quality per dollar")
+
+with opp_col4:
+    st.metric(
+        "History Signal",
+        f"{best_opp.get('history_score', 0)}/100",
+    )
+    st.caption(
+        f"{best_opp.get('history', {}).get('sample_size', 0)} recorded observations"
+    )
+
+opp_ticket = best_opportunity["ticket"]
+opp_game = best_opportunity["game"]
+
+if best_opportunity["ticket"]["id"] != ticket["id"]:
+    st.info(
+        f"**Hidden opportunity:** Falcons vs {opp_game.get('opponent', 'Unknown')} "
+        f"— Section {opp_ticket.get('section')} • Row {opp_ticket.get('row')} "
+        f"— ${float(opp_ticket.get('price', 0)):.0f}/ticket. "
+        f"{best_opp.get('reason', '')}"
+    )
+else:
+    st.success(
+        f"**Your recommendation is also the strongest opportunity.** "
+        f"{best_opp.get('reason', '')}"
+    )
+
+upgrade = get_opportunity_upgrade(recommendation, candidates)
+if upgrade:
+    upgrade_ticket = upgrade["candidate"]["ticket"]
+    upgrade_game = upgrade["candidate"]["game"]
+    st.markdown("**What would your next dollars actually buy?**")
+    u1, u2, u3 = st.columns(3)
+    with u1:
+        st.metric(
+            "Extra Cost",
+            f"+${upgrade['extra_cost']:.0f}/ticket",
+        )
+    with u2:
+        st.metric(
+            "Seat Quality Gain",
+            f"+{upgrade['seat_gain']} points",
+        )
+    with u3:
+        st.caption(
+            f"Upgrade: Falcons vs {upgrade_game.get('opponent', 'Unknown')} "
+            f"• Sec {upgrade_ticket.get('section')} • Row {upgrade_ticket.get('row')} "
+            f"• ${float(upgrade_ticket.get('price', 0)):.0f}"
+        )
+
+with st.expander("How KickSeatz found this opportunity"):
+    st.write(
+        f"**Relative price:** {best_opp.get('relative_price_score', 0)}/100 — "
+        "compared with the actual eligible tickets for the matchup."
+    )
+    st.write(
+        f"**Seat value:** {best_opp.get('seat_value_score', 0)}/100 — "
+        "seat quality relative to ticket price across eligible inventory."
+    )
+    st.write(
+        f"**Budget efficiency:** {best_opp.get('budget_efficiency_score', 0)}/100 — "
+        "how efficiently the ticket uses the selected per-ticket budget."
+    )
+    st.write(
+        f"**Historical signal:** {best_opp.get('history_score', 0)}/100 — "
+        "based only on recorded prices for this ticket."
+    )
+    st.write(
+        f"**Availability signal:** {best_opp.get('scarcity_score', 0)}/100 — "
+        "based on current inventory available for the requested quantity."
+    )
 
 # ============================================================
 # PRICE BENCHMARK + BUDGET OPPORTUNITY
