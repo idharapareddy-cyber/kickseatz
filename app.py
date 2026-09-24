@@ -12,6 +12,13 @@ import requests
 import streamlit as st
 
 # Streamlit page configuration must happen before other Streamlit UI calls.
+st.set_page_config(
+    page_title="KickSeatz",
+    page_icon="🏟️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
 TICKETMASTER_API_KEY = st.secrets.get("TICKETMASTER_API_KEY", "")
 
 
@@ -34,11 +41,8 @@ TOP_PICKS_ENABLED = str(
 
 
 def _add_api_key_to_image_url(url, api_key):
-    if not url or not api_key:
-        return url
-
-    separator = "&" if "?" in str(url) else "?"
-    return f"{url}{separator}{urlencode({'apikey': api_key})}"
+    """Return image URL without exposing the Ticketmaster API key to the browser."""
+    return url
 
 
 @st.cache_data(ttl=60)
@@ -165,14 +169,8 @@ def load_top_picks(
                     "face_value": face_value,
                     "currency": currency,
                     "offer_name": offer_name,
-                    "snapshot_url": _add_api_key_to_image_url(
-                        pick.get("snapshotImageUrl"),
-                        TOP_PICKS_API_KEY,
-                    ),
-                    "vfs_url": _add_api_key_to_image_url(
-                        pick.get("largeVFSImageUrl"),
-                        TOP_PICKS_API_KEY,
-                    ),
+                    "snapshot_url": pick.get("snapshotImageUrl"),
+                    "vfs_url": pick.get("largeVFSImageUrl"),
                 }
             )
 
@@ -344,13 +342,6 @@ def enrich_games_with_ticketmaster(
 # ============================================================
 # KICKSEATZ — SMART SPORTS TICKET FINDER
 # ============================================================
-
-st.set_page_config(
-    page_title="KickSeatz",
-    page_icon="🏟️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 # ============================================================
 # PATHS
@@ -1172,10 +1163,11 @@ def calculate_opportunity_score(ticket, game, eligible_pairs, budget, ticket_cou
     else:
         seat_value_score = 50
 
-    if budget > 0:
-        utilization = current_price / budget
-        # Lower spend preserves more of the user's budget while value and seat quality still matter.
-        budget_efficiency_score = _clamp(100 - utilization * 100)
+    if budget > 0 and current_price > 0:
+        # A ticket should not receive extra opportunity points merely for
+        # spending a fixed percentage of the user's budget. Reward lower
+        # spend while preserving value instead.
+        budget_efficiency_score = _clamp((budget / current_price) * 55)
     else:
         budget_efficiency_score = 50
 
@@ -1558,27 +1550,24 @@ def get_reasons(
 
     reasons = []
 
-    opponent_rating = OPPONENT_POWER_RANKINGS.get(
+    opponent_rank = OPPONENT_POWER_RANKINGS.get(
         opponent,
-        70
+        32
     )
 
-    if opponent_rating >= 90:
+    if opponent_rank <= 10:
         reasons.append(
-            f"{opponent} has a strong opponent rating "
-            f"of {opponent_rating}/100."
+            f"{opponent} is Power Ranking #{opponent_rank}, a high-ranked matchup."
         )
 
-    elif opponent_rating >= 80:
+    elif opponent_rank <= 20:
         reasons.append(
-            f"{opponent} has an above-average opponent rating "
-            f"of {opponent_rating}/100."
+            f"{opponent} is Power Ranking #{opponent_rank}, giving the matchup solid game-quality value."
         )
 
     else:
         reasons.append(
-            f"{opponent} has an opponent rating of "
-            f"{opponent_rating}/100."
+            f"{opponent} is Power Ranking #{opponent_rank}."
         )
 
     if game.get("home_game"):
@@ -2641,10 +2630,6 @@ if not candidates:
     st.error(
         "No tickets currently fit your requirements."
     )
-    st.info(
-        "Try increasing your budget, lowering the minimum seat quality, "
-        "removing the rivals-only filter, or selecting all games."
-    )
 
     valid_prices = [
         t["price"]
@@ -3190,8 +3175,7 @@ st.markdown(
 st.caption(
     "KickSeatz looks for value that a simple cheapest-ticket search can miss. "
     "This signal compares the actual eligible market, seat value, budget efficiency, "
-    "observed price history, and current inventory. It is descriptive, not a prediction. "
-    "A higher score does not guarantee that a ticket will remain available or change in price."
+    "observed price history, and current inventory. It is descriptive, not a prediction."
 )
 
 opp_col1, opp_col2, opp_col3, opp_col4 = st.columns(4)
@@ -3316,7 +3300,7 @@ if benchmark:
             if benchmark["difference"] > 0
             else "At median"
         )
-        st.metric("Price Position", f"{benchmark['percentile']}%", delta_text)
+        st.metric("Ticket Position", f"{benchmark['percentile']}%", delta_text)
 
     with pb4:
         st.metric("Comparable Tickets", benchmark["sample_size"])
@@ -3416,7 +3400,7 @@ if len(candidates) >= 2:
     ag = alternative["game"]
 
     st.markdown(
-        '<div class="section-title">🔄 Next-Best Option</div>',
+        '<div class="section-title">🔄 Best Alternative</div>',
         unsafe_allow_html=True,
     )
 
@@ -3595,7 +3579,7 @@ with b3:
 
     if not seat_notes:
         seat_notes.append(
-            "Standard seat-quality rating based on section and row."
+            "KickSeatz seat-quality heuristic based on section and row."
         )
 
     st.caption(
@@ -4127,7 +4111,7 @@ st.markdown(
 )
 
 st.caption(
-    "Put up to three tickets head-to-head and compare their scores under the selected priority."
+    "Put up to three tickets head-to-head and compare their KickSeatz ratings."
 )
 
 if len(rate_options) >= 2:
@@ -4232,7 +4216,7 @@ if len(rate_options) >= 2:
 
                 st.caption(
                     f"Seat: {r['seat']}/100 — "
-                    "based on section and row."
+                    "KickSeatz seat-quality heuristic based on section and row."
                 )
 
                 st.caption(
@@ -4256,7 +4240,7 @@ if len(rate_options) >= 2:
                 )
 
         st.success(
-            f"KickSeatz's highest-scoring option under the selected priority is "
+            f"Highest-rated option in this comparison: "
             f"Falcons vs {winner[1]['opponent']} "
             f"at ${winner[0]['price']:.0f}/ticket "
             f"({winner[2]['score']}/100)."
@@ -4417,16 +4401,10 @@ with fresh_col1:
         st.caption("The database does not expose a usable update timestamp.")
 
 with fresh_col2:
-    if TICKETMASTER_API_KEY and ticketmaster_events:
-        st.metric("Ticketmaster Metadata", "Connected")
-        st.caption(
-            "Event discovery is cached for performance and may be slightly older than a live request."
-        )
-    else:
-        st.metric("Ticketmaster Metadata", "Unavailable")
-        st.caption(
-            "Live event metadata is unavailable in this session; KickSeatz can still use its local inventory."
-        )
+    st.metric("Ticketmaster Metadata", "≤ 5 min cache")
+    st.caption(
+        "Event discovery is cached for performance and may be slightly older than a live request."
+    )
 
 with fresh_col3:
     st.metric(
@@ -4545,3 +4523,25 @@ if show_debug:
                 f"Game lookup: "
                 f"{'FOUND' if game else 'NOT FOUND'}"
             )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
