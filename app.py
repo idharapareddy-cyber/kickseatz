@@ -437,8 +437,15 @@ st.markdown("""
 .hero h1 { font-size:48px; line-height:1; margin:0 0 7px; font-weight:900; letter-spacing:-.035em; position:relative; z-index:1; }
 .hero p { margin:6px 0; font-size:18px; position:relative; z-index:1; }
 .hero .tagline { color:#e8edf5; font-size:15px; max-width:680px; }
-.section-title { margin:26px 0 12px; padding:0 0 8px 12px; border-left:4px solid var(--ks-red);
-    border-bottom:1px solid var(--ks-border); color:var(--ks-ink); font-size:1.45rem; line-height:1.2; font-weight:850; letter-spacing:-.015em; }
+.section-title { margin:34px 0 16px; padding:0 0 9px 12px; border-left:4px solid var(--ks-red);
+    border-bottom:1px solid var(--ks-border); color:var(--ks-ink); font-size:1.45rem; line-height:1.25; font-weight:850; letter-spacing:-.015em; }
+.section-title + div { margin-top:2px; }
+[data-testid="stCaptionContainer"] { margin-top:6px; margin-bottom:10px; line-height:1.5; }
+[data-testid="stCaptionContainer"] p { line-height:1.5; }
+[data-testid="stMarkdownContainer"] p { line-height:1.5; }
+[data-testid="stMarkdownContainer"] h2 { margin-top:1.7rem; margin-bottom:.75rem; line-height:1.2; }
+[data-testid="stMarkdownContainer"] h3 { margin-top:1.15rem; margin-bottom:.55rem; line-height:1.25; }
+.feature-card p,.watch-card p,.seat-map-card p { line-height:1.5; }
 .matchup-card { content-visibility:auto; contain-intrinsic-size:190px; min-height:190px; padding:18px; border:1px solid var(--ks-border); border-radius:20px;
     background:linear-gradient(145deg,#fff 0%,#f8fafc 100%); box-shadow:0 8px 24px rgba(15,23,42,.07); margin-bottom:14px; }
 .matchup-label { color:var(--ks-muted); font-size:11px; font-weight:800; letter-spacing:.13em; text-transform:uppercase; margin-bottom:10px; }
@@ -459,7 +466,7 @@ st.markdown("""
 button,[data-testid="stButton"] button,[data-testid="stDownloadButton"] button,[data-baseweb="select"]>div,[data-testid="stSlider"] [role="slider"] { min-height:44px; }
 [data-testid="stButton"] button,[data-testid="stDownloadButton"] button { border-radius:12px; font-weight:700; }
 h1,h2,h3 { letter-spacing:-.015em; }
-@media (max-width:768px) { .hero{padding:24px 20px;border-radius:18px;} .hero h1{font-size:36px;} .hero p{font-size:15px;} .section-title{font-size:20px;margin-top:22px;} .matchup-card{min-height:176px;contain-intrinsic-size:176px;padding:15px;} .matchup-team{width:82px;} .matchup-team img{width:50px;height:50px;} div[data-testid="stMetricValue"]{font-size:1.2rem;} }
+@media (max-width:768px) { .hero{padding:24px 20px;border-radius:18px;} .hero h1{font-size:36px;} .hero p{font-size:15px;} .section-title{font-size:20px;margin-top:28px;margin-bottom:14px;} .matchup-card{min-height:176px;contain-intrinsic-size:176px;padding:15px;} .matchup-team{width:82px;} .matchup-team img{width:50px;height:50px;} div[data-testid="stMetricValue"]{font-size:1.2rem;} }
 </style>
 """, unsafe_allow_html=True)
 
