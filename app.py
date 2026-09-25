@@ -2116,7 +2116,7 @@ def get_schematic_seat_map_svg(ticket):
             Schematic only — not to scale
         </div>
         <svg viewBox="0 0 300 320" width="100%" role="img"
-             aria-labelledby="seat-map-title-{section}">
+             aria-label="Schematic seating zone preview for Section {section}">
             <title id="seat-map-title-{section}">Schematic seating zone preview for Section {section}</title>
             <rect x="115" y="125" width="70" height="70" rx="16"
                   fill="#111111" opacity=".92"/>
@@ -2427,17 +2427,17 @@ def clear_app_cache_and_rerun():
 # HERO
 # ============================================================
 
-# Streamlit owns the document <head>, so set the SEO metadata and main landmark
-# from a tiny Components v2 helper instead of placing <meta> inside the app body.
-# Components v2 is available in the Streamlit version used by KickSeatz.
-_kickseatz_page_helper = st.components.v2.component(
-    name="kickseatz_page_semantics",
-    js="""
-export default function(component) {
-  const applyPageSemantics = () => {
-    const description =
-      "KickSeatz is a smart sports ticket finder that analyzes price, seats, game quality, availability, and ticket value for Atlanta Falcons tickets.";
+# Streamlit renders the app shell dynamically.  Use st.html with page-level
+# JavaScript so the metadata/accessibility fixes reach the real document DOM
+# instead of an iframe or repeatedly observing every Streamlit mutation.
+st.html("""
+<script>
+(() => {
+  const description =
+    "KickSeatz is a smart sports ticket finder that analyzes price, seats, game quality, availability, and ticket value for Atlanta Falcons tickets.";
 
+  const applyPageSemantics = () => {
+    // SEO: put the description in the actual document <head>.
     let meta = document.head.querySelector('meta[name="description"]');
     if (!meta) {
       meta = document.createElement("meta");
@@ -2446,26 +2446,43 @@ export default function(component) {
     }
     meta.setAttribute("content", description);
 
+    // Accessibility: Streamlit's main container is a section in some
+    // versions. Give it an explicit main landmark without moving React nodes.
     const main =
       document.querySelector('[data-testid="stMain"]') ||
       document.querySelector('[data-testid="stAppViewContainer"] .main') ||
-      document.querySelector("main");
+      document.querySelector('main');
 
-    if (main) {
+    if (main && !main.hasAttribute("role")) {
       main.setAttribute("role", "main");
+    }
+    if (main) {
       main.setAttribute("aria-label", "KickSeatz ticket finder");
     }
+
+    // Accessibility: use a direct accessible name for our schematic SVGs.
+    // This avoids relying on an aria-labelledby ID generated from a section
+    // value, which can be invalid when that value contains special characters.
+    document.querySelectorAll('svg[role="img"]').forEach((svg) => {
+      const title = svg.querySelector("title");
+      const titleText = title?.textContent?.trim();
+      svg.removeAttribute("aria-labelledby");
+      svg.setAttribute(
+        "aria-label",
+        titleText || "KickSeatz schematic seat map"
+      );
+    });
   };
 
+  // Streamlit may finish mounting the page after this script runs, so make
+  // only a few short, scheduled passes instead of a permanent MutationObserver.
   applyPageSemantics();
-  const observer = new MutationObserver(applyPageSemantics);
-  observer.observe(document.documentElement, { childList: true, subtree: true });
-
-  return () => observer.disconnect();
-};
-""",
-)
-_kickseatz_page_helper()
+  [100, 500, 1200, 2500].forEach((delay) => {
+    window.setTimeout(applyPageSemantics, delay);
+  });
+})();
+</script>
+""", unsafe_allow_javascript=True)
 
 st.markdown("""
 <div class="hero">
@@ -2854,10 +2871,10 @@ with left:
     recommendation_opponent = display_team_name(game.get("opponent", "Unknown"))
     st.markdown(
         f"""<div class=\"recommendation-matchup\">
-            <img src=\"{get_nfl_logo_url('Atlanta Falcons')}\" alt=\"Atlanta Falcons logo\" width=\"46\" height=\"46\" decoding=\"async\" fetchpriority=\"low\">
+            <img src=\"{get_nfl_logo_url('Atlanta Falcons')}\" alt=\"Atlanta Falcons logo\" width=\"46\" height=\"46\" loading=\"lazy\" decoding=\"async\" fetchpriority=\"low\">
             <span class=\"team-name\">Atlanta Falcons</span>
             <span class=\"versus\">VS</span>
-            <img src=\"{get_nfl_logo_url(recommendation_opponent)}\" alt=\"{recommendation_opponent} logo\" width=\"46\" height=\"46\" decoding=\"async\" fetchpriority=\"low\">
+            <img src=\"{get_nfl_logo_url(recommendation_opponent)}\" alt=\"{recommendation_opponent} logo\" width=\"46\" height=\"46\" loading=\"lazy\" decoding=\"async\" fetchpriority=\"low\">
             <span class=\"team-name\">{recommendation_opponent}</span>
         </div>""",
         unsafe_allow_html=True,
