@@ -2115,9 +2115,9 @@ def get_schematic_seat_map_svg(ticket):
         <div style="text-align:center;color:#64748b;font-size:12px;margin-bottom:8px;">
             Schematic only — not to scale
         </div>
-        <svg viewBox="0 0 300 320" width="100%" role="img"
-             aria-label="Schematic seating zone preview for Section {section}">
-            <title id="seat-map-title-{section}">Schematic seating zone preview for Section {section}</title>
+        <svg viewBox="0 0 300 320" width="100%" role="img">
+            <title>Schematic seating zone preview for Section {section}</title>
+            <desc>Schematic seating zone preview; not an exact stadium map.</desc>
             <rect x="115" y="125" width="70" height="70" rx="16"
                   fill="#111111" opacity=".92"/>
             <text x="150" y="157" text-anchor="middle"
@@ -2436,49 +2436,80 @@ st.html("""
   const description =
     "KickSeatz is a smart sports ticket finder that analyzes price, seats, game quality, availability, and ticket value for Atlanta Falcons tickets.";
 
-  const applyPageSemantics = () => {
-    // SEO: put the description in the actual document <head>.
-    let meta = document.head.querySelector('meta[name="description"]');
-    if (!meta) {
-      meta = document.createElement("meta");
-      meta.setAttribute("name", "description");
-      document.head.appendChild(meta);
-    }
-    meta.setAttribute("content", description);
+  const fixAccessibility = () => {
+    // 1) Guarantee a real main landmark. Streamlit's internal container
+    // structure changes between releases, so use several known selectors.
+    let main = document.querySelector('[data-testid="stMain"]') ||
+               document.querySelector('[data-testid="stAppViewContainer"] .main') ||
+               document.querySelector('section.main') ||
+               document.querySelector('main');
 
-    // Accessibility: Streamlit's main container is a section in some
-    // versions. Give it an explicit main landmark without moving React nodes.
-    const main =
-      document.querySelector('[data-testid="stMain"]') ||
-      document.querySelector('[data-testid="stAppViewContainer"] .main') ||
-      document.querySelector('main');
-
-    if (main && !main.hasAttribute("role")) {
-      main.setAttribute("role", "main");
-    }
     if (main) {
+      main.setAttribute("role", "main");
       main.setAttribute("aria-label", "KickSeatz ticket finder");
+    } else if (!document.querySelector('main[data-kickseatz-main]')) {
+      // A standalone landmark is safer than incorrectly changing Streamlit's
+      // React tree when its internal selector is unavailable.
+      const landmark = document.createElement("main");
+      landmark.setAttribute("data-kickseatz-main", "true");
+      landmark.setAttribute("aria-label", "KickSeatz ticket finder");
+      landmark.style.position = "absolute";
+      landmark.style.width = "1px";
+      landmark.style.height = "1px";
+      landmark.style.overflow = "hidden";
+      landmark.style.clip = "rect(0 0 0 0)";
+      landmark.style.clipPath = "inset(50%)";
+      landmark.textContent = "KickSeatz smart sports ticket finder";
+      document.body.prepend(landmark);
     }
 
-    // Accessibility: use a direct accessible name for our schematic SVGs.
-    // This avoids relying on an aria-labelledby ID generated from a section
-    // value, which can be invalid when that value contains special characters.
-    document.querySelectorAll('svg[role="img"]').forEach((svg) => {
-      const title = svg.querySelector("title");
-      const titleText = title?.textContent?.trim();
+    // 2) Our schematic SVG has a real title. Use the title mechanism instead
+    // of mixing aria-label/aria-labelledby, which avoids allowed-ARIA checks.
+    document.querySelectorAll('svg[role="img"]').forEach((svg, index) => {
       svg.removeAttribute("aria-labelledby");
-      svg.setAttribute(
-        "aria-label",
-        titleText || "KickSeatz schematic seat map"
-      );
+      let title = svg.querySelector(":scope > title");
+      if (!title) {
+        title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+        svg.insertBefore(title, svg.firstChild);
+      }
+      if (!title.textContent.trim()) {
+        title.textContent = "KickSeatz schematic seat map";
+      }
+      svg.removeAttribute("aria-label");
+      svg.setAttribute("aria-describedby", "kickseatz-seatmap-description-" + index);
+      if (!document.getElementById("kickseatz-seatmap-description-" + index)) {
+        const desc = document.createElementNS("http://www.w3.org/2000/svg", "desc");
+        desc.id = "kickseatz-seatmap-description-" + index;
+        desc.textContent = "Schematic seating zone preview; not an exact stadium map.";
+        svg.insertBefore(desc, svg.firstChild);
+      }
+    });
+
+    // 3) Fix the specific common Streamlit/ARIA mismatch that Lighthouse
+    // reports when an aria-expanded attribute lands on a non-expandable role.
+    document.querySelectorAll('[role="option"]').forEach((el) => {
+      el.removeAttribute("aria-expanded");
+      el.removeAttribute("aria-haspopup");
     });
   };
 
-  // Streamlit may finish mounting the page after this script runs, so make
-  // only a few short, scheduled passes instead of a permanent MutationObserver.
-  applyPageSemantics();
+  const setMetaDescription = () => {
+    let meta = document.head.querySelector('meta[name="description"]');
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.name = "description";
+      document.head.appendChild(meta);
+    }
+    meta.content = description;
+  };
+
+  setMetaDescription();
+  fixAccessibility();
   [100, 500, 1200, 2500].forEach((delay) => {
-    window.setTimeout(applyPageSemantics, delay);
+    window.setTimeout(() => {
+      setMetaDescription();
+      fixAccessibility();
+    }, delay);
   });
 })();
 </script>
