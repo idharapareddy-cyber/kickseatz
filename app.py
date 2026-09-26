@@ -994,6 +994,10 @@ try:
         MASTER_DATA_PATH
     )
 
+    # Guarantee the full current MBS home schedule even if the older
+    # local JSON still contains only the original four games.
+    master_dataset = ensure_home_schedule(master_dataset)
+
     ticketmaster_events = load_ticketmaster_events()
     
     if isinstance(master_dataset, dict):
