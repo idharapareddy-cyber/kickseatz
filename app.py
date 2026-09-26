@@ -416,6 +416,296 @@ MASTER_DATA_PATH = find_file(
 )
 
 # ============================================================
+# REAL-WORLD VENUE BASELINE / DEMO INVENTORY
+# ============================================================
+# Ticketmaster's public schedule and Mercedes-Benz Stadium seating
+# structure are used as the baseline. Prices and quantities generated
+# here are DEMONSTRATION values until authorized live seat inventory
+# is available through Ticketmaster Top Picks.
+#
+# This layer is intentionally separate from the recommendation engine.
+# When live inventory becomes available, Ticketmaster data can replace
+# these rows without changing the scoring / Opportunity Engine.
+
+MBS_HOME_GAME_BASELINE = [
+    {
+        "week": 2,
+        "opponent": "Carolina Panthers",
+        "game_date": "2026-09-20",
+    },
+    {
+        "week": 5,
+        "opponent": "Baltimore Ravens",
+        "game_date": "2026-10-11",
+    },
+    {
+        "week": 6,
+        "opponent": "Chicago Bears",
+        "game_date": "2026-10-18",
+    },
+    {
+        "week": 7,
+        "opponent": "San Francisco 49ers",
+        "game_date": "2026-10-25",
+    },
+    {
+        "week": 10,
+        "opponent": "Kansas City Chiefs",
+        "game_date": "2026-11-15",
+    },
+    {
+        "week": 13,
+        "opponent": "Detroit Lions",
+        "game_date": "2026-12-06",
+    },
+    {
+        "week": 16,
+        "opponent": "Tampa Bay Buccaneers",
+        "game_date": None,
+    },
+    {
+        "week": 17,
+        "opponent": "New Orleans Saints",
+        "game_date": "2027-01-03",
+    },
+]
+
+# Real Mercedes-Benz Stadium seating sections documented by the
+# stadium. We use representative sections across the 100/200/300
+# levels plus documented club sections. We do NOT claim these rows
+# are currently available for sale.
+MBS_BASELINE_SECTIONS = [
+    # 100 level / lower bowl
+    ("101", "100", 145),
+    ("105", "100", 135),
+    ("108", "100", 150),
+    ("112", "100", 150),
+    ("116", "100", 125),
+    ("121", "100", 120),
+    ("124", "100", 130),
+    ("128", "100", 135),
+    ("131", "100", 140),
+    ("133", "100", 120),
+    # documented field-level club sections
+    ("108C", "Club", 275),
+    ("110C", "Club", 295),
+    ("128C", "Club", 295),
+    ("130C", "Club", 275),
+    # 200 level
+    ("203", "200", 95),
+    ("210", "200", 90),
+    ("216", "200", 85),
+    ("220", "200", 80),
+    ("223", "200", 82),
+    ("232", "200", 78),
+    ("236", "200", 88),
+    ("243", "200", 82),
+    ("246", "200", 78),
+    # 300 level
+    ("301", "300", 58),
+    ("308", "300", 62),
+    ("315", "300", 65),
+    ("323", "300", 55),
+    ("328", "300", 52),
+    ("333", "300", 58),
+    ("340", "300", 50),
+    ("345", "300", 55),
+]
+
+MBS_DEMO_ROWS = ["4", "8", "12", "18"]
+
+
+def _demo_price_multiplier(week):
+    """Small matchup-based demo adjustment; not a market-price claim."""
+    return {
+        2: 0.88,
+        5: 1.18,
+        6: 0.94,
+        7: 1.02,
+        10: 1.28,
+        13: 1.04,
+        16: 0.96,
+        17: 1.10,
+    }.get(int(week), 1.0)
+
+
+def ensure_mbs_demo_inventory(db_path):
+    """
+    Add a realistic Mercedes-Benz Stadium baseline when the local
+    inventory is still tiny. Existing user/API rows are preserved.
+
+    This function only seeds missing demo combinations. It never claims
+    the generated rows are live Ticketmaster availability.
+    """
+    conn = sqlite3.connect(db_path)
+
+    try:
+        table_check = conn.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name = 'ticket_inventory'
+            """
+        ).fetchone()
+
+        if table_check is None:
+            return 0
+
+        columns = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(ticket_inventory)"
+            ).fetchall()
+        }
+
+        required = {
+            "id",
+            "week",
+            "opponent",
+            "game_date",
+            "section",
+            "row",
+            "price",
+            "quantity",
+        }
+
+        if not required.issubset(columns):
+            return 0
+
+        existing = conn.execute(
+            """
+            SELECT week, opponent, section, row
+            FROM ticket_inventory
+            """
+        ).fetchall()
+
+        existing_keys = {
+            (
+                int(re.search(r"\d+", str(week)).group()) if re.search(r"\d+", str(week)) else str(week).strip(),
+                str(opponent).strip(),
+                str(section).strip(),
+                str(row).strip(),
+            )
+            for week, opponent, section, row in existing
+        }
+
+        max_id_row = conn.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM ticket_inventory"
+        ).fetchone()
+        next_id = int(max_id_row[0] or 0) + 1
+
+        has_source = "source" in columns
+        has_last_updated = "last_updated" in columns
+        has_event_id = "event_id" in columns
+
+        inserted = 0
+
+        for game in MBS_HOME_GAME_BASELINE:
+            multiplier = _demo_price_multiplier(game["week"])
+
+            for section, level, base_price in MBS_BASELINE_SECTIONS:
+                # Four representative rows per section create enough
+                # variety for filters, seat scoring, comparison, and
+                # Opportunity Engine testing without pretending to be
+                # a complete seat-by-seat marketplace feed.
+                for row_number in MBS_DEMO_ROWS:
+                    key = (
+                        int(game["week"]),
+                        game["opponent"],
+                        section,
+                        row_number,
+                    )
+
+                    if key in existing_keys:
+                        continue
+
+                    row_adjustment = {
+                        "4": 1.16,
+                        "8": 1.08,
+                        "12": 1.00,
+                        "18": 0.94,
+                    }[row_number]
+
+                    price = max(
+                        35,
+                        round(
+                            base_price
+                            * multiplier
+                            * row_adjustment
+                            / 5
+                        )
+                        * 5,
+                    )
+
+                    quantity = {
+                        "4": 2,
+                        "8": 4,
+                        "12": 4,
+                        "18": 6,
+                    }[row_number]
+
+                    source = (
+                        "KickSeatz Demo Inventory | "
+                        "MBS Ticketmaster Seating Baseline"
+                    )
+                    last_updated = datetime.now().isoformat()
+
+                    fields = [
+                        "id",
+                        "week",
+                        "opponent",
+                        "game_date",
+                        "section",
+                        "row",
+                        "price",
+                        "quantity",
+                    ]
+                    values = [
+                        next_id,
+                        game["week"],
+                        game["opponent"],
+                        game["game_date"],
+                        section,
+                        row_number,
+                        price,
+                        quantity,
+                    ]
+
+                    if has_event_id:
+                        fields.append("event_id")
+                        values.append(
+                            f"DEMO-MBS-2026-W{int(game['week']):02d}"
+                        )
+
+                    if has_source:
+                        fields.append("source")
+                        values.append(source)
+
+                    if has_last_updated:
+                        fields.append("last_updated")
+                        values.append(last_updated)
+
+                    placeholders = ", ".join("?" for _ in fields)
+                    conn.execute(
+                        f"INSERT INTO ticket_inventory "
+                        f"({', '.join(fields)}) "
+                        f"VALUES ({placeholders})",
+                        values,
+                    )
+
+                    existing_keys.add(key)
+                    next_id += 1
+                    inserted += 1
+
+        conn.commit()
+        return inserted
+
+    finally:
+        conn.close()
+
+
+# ============================================================
 # CUSTOM CSS
 # ============================================================
 
@@ -518,163 +808,6 @@ st.markdown("""
 # ============================================================
 # DATA LOADING
 # ============================================================
-
-# ============================================================
-# 2026 FALCONS SCHEDULE + DEMO INVENTORY
-# ============================================================
-
-# Official 2026 schedule structure. Dates/times are kept here as a
-# fallback so the app can still show the full season if the local JSON
-# is incomplete. Ticket prices/quantities generated below are DEMO data,
-# not live Ticketmaster availability.
-FALCONS_2026_SCHEDULE = [
-    {"week": 1, "opponent": "Pittsburgh Steelers", "game_date": "2026-09-13", "home": False},
-    {"week": 2, "opponent": "Carolina Panthers", "game_date": "2026-09-20", "home": True},
-    {"week": 3, "opponent": "Green Bay Packers", "game_date": "2026-09-24", "home": False},
-    {"week": 4, "opponent": "New Orleans Saints", "game_date": "2026-10-05", "home": False},
-    {"week": 5, "opponent": "Baltimore Ravens", "game_date": "2026-10-11", "home": True},
-    {"week": 6, "opponent": "Chicago Bears", "game_date": "2026-10-18", "home": True},
-    {"week": 7, "opponent": "San Francisco 49ers", "game_date": "2026-10-25", "home": True},
-    {"week": 8, "opponent": "Tampa Bay Buccaneers", "game_date": "2026-11-01", "home": False},
-    # The NFL lists Cincinnati at Atlanta in Week 9, but the game is
-    # designated for Madrid rather than Mercedes-Benz Stadium.
-    {"week": 9, "opponent": "Cincinnati Bengals", "game_date": "2026-11-08", "home": False, "neutral_site": True, "location": "Madrid"},
-    {"week": 10, "opponent": "Kansas City Chiefs", "game_date": "2026-11-15", "home": True},
-    {"week": 11, "opponent": "BYE", "game_date": "2026-11-22", "home": False, "bye": True},
-    {"week": 12, "opponent": "Minnesota Vikings", "game_date": "2026-11-29", "home": False},
-    {"week": 13, "opponent": "Detroit Lions", "game_date": "2026-12-06", "home": True},
-    {"week": 14, "opponent": "Cleveland Browns", "game_date": "2026-12-13", "home": False},
-    {"week": 15, "opponent": "Washington Commanders", "game_date": "2026-12-20", "home": False},
-    {"week": 16, "opponent": "Tampa Bay Buccaneers", "game_date": None, "home": True},
-    {"week": 17, "opponent": "New Orleans Saints", "game_date": "2027-01-03", "home": True},
-    {"week": 18, "opponent": "Carolina Panthers", "game_date": None, "home": False},
-]
-
-# Real Mercedes-Benz Stadium section references used for the demo layout.
-# These are seating locations, not claims of current availability.
-DEMO_HOME_SECTIONS = [
-    ("101", "Lower Bowl", 155),
-    ("105", "Lower Bowl", 175),
-    ("116", "Lower Bowl", 145),
-    ("123", "Lower Bowl", 125),
-    ("133", "Lower Bowl", 165),
-    ("210", "Upper Bowl", 85),
-    ("220", "Upper Bowl", 95),
-    ("234", "Upper Bowl", 78),
-    ("301", "Upper Bowl", 62),
-    ("318", "Upper Bowl", 68),
-    ("333", "Upper Bowl", 72),
-    ("346", "Upper Bowl", 58),
-]
-
-
-def _demo_week(value):
-    """Small local week parser used before the main scoring helpers load."""
-    match = re.search(r"\d+", str(value or ""))
-    return int(match.group()) if match else None
-
-
-DEMO_OPPONENT_RANKINGS = {
-    "Pittsburgh Steelers": 21,
-    "Carolina Panthers": 23,
-    "Green Bay Packers": 12,
-    "New Orleans Saints": 22,
-    "Baltimore Ravens": 6,
-    "Chicago Bears": 11,
-    "San Francisco 49ers": 17,
-    "Tampa Bay Buccaneers": 18,
-    "Cincinnati Bengals": 7,
-    "Kansas City Chiefs": 14,
-    "Minnesota Vikings": 19,
-    "Detroit Lions": 15,
-    "Cleveland Browns": 30,
-    "Washington Commanders": 31,
-}
-
-
-def ensure_falcons_schedule(dataset):
-    """Merge the verified 2026 Falcons schedule into the local dataset."""
-    if not isinstance(dataset, dict):
-        dataset = {"games": []}
-
-    existing = dataset.get("games", [])
-    if not isinstance(existing, list):
-        existing = []
-
-    by_week = {
-        _demo_week(game.get("week")): game
-        for game in existing
-        if isinstance(game, dict) and _demo_week(game.get("week")) is not None
-    }
-
-    merged = []
-    for official_game in FALCONS_2026_SCHEDULE:
-        current = dict(by_week.get(official_game["week"], {}))
-        current.update(official_game)
-        merged.append(current)
-
-    dataset["games"] = merged
-    return dataset
-
-
-def build_demo_home_inventory(existing_inventory, dataset):
-    """Fill out realistic demo inventory for Atlanta home games only.
-
-    Prices and quantities are deliberately labeled demo data. The future
-    Ticketmaster adapter can replace these rows with live offers without
-    changing the recommendation engine.
-    """
-    inventory = list(existing_inventory or [])
-    existing_keys = {
-        (_demo_week(t.get("week")), str(t.get("section")))
-        for t in inventory
-    }
-
-    games = dataset.get("games", []) if isinstance(dataset, dict) else []
-    demo_id = -1000
-
-    for game in games:
-        if not game.get("home") or game.get("bye") or game.get("neutral_site"):
-            continue
-
-        week = _demo_week(game.get("week"))
-        opponent = game.get("opponent")
-        game_date = game.get("game_date")
-
-        if week is None or not opponent:
-            continue
-
-        opponent_rank = DEMO_OPPONENT_RANKINGS.get(opponent, 20)
-        # Stronger opponents get a modest demo demand premium.
-        demand_adjustment = max(0, 18 - opponent_rank) * 2
-
-        for index, (section, area, base_price) in enumerate(DEMO_HOME_SECTIONS):
-            key = (week, section)
-            if key in existing_keys:
-                continue
-
-            row = str((index % 8) + 1)
-            price = max(45, base_price + demand_adjustment + ((week + index) % 3) * 5)
-            quantity = 2 + ((week + index) % 5)
-
-            inventory.append({
-                "id": demo_id,
-                "week": week,
-                "opponent": opponent,
-                "game_date": game_date,
-                "section": section,
-                "row": row,
-                "price": float(price),
-                "available_quantity": quantity,
-                "source": "KickSeatz Demo Inventory",
-                "last_updated": datetime.now().isoformat(),
-                "demo_area": area,
-            })
-            existing_keys.add(key)
-            demo_id -= 1
-
-    return inventory
-
 
 @st.cache_data
 def load_master_dataset(path):
@@ -861,8 +994,6 @@ try:
         MASTER_DATA_PATH
     )
 
-    master_dataset = ensure_falcons_schedule(master_dataset)
-
     ticketmaster_events = load_ticketmaster_events()
     
     if isinstance(master_dataset, dict):
@@ -877,16 +1008,13 @@ try:
             )
         )
 
+    # Seed the real-world MBS section baseline before loading inventory.
+    # This expands the tiny original demo dataset while preserving any
+    # existing Ticketmaster/API or manually-added rows.
+    ensure_mbs_demo_inventory(DB_PATH)
+
     inventory = load_inventory(
         DB_PATH
-    )
-
-    # Expand the tiny local dataset into a useful, transparent demo catalog.
-    # These are modeled from real MBS section locations, but prices and
-    # availability are not represented as live Ticketmaster inventory.
-    inventory = build_demo_home_inventory(
-        inventory,
-        master_dataset,
     )
 
     record_price_history(
@@ -4606,11 +4734,10 @@ st.caption(
 
 st.caption(
     "Ticket inventory shown in this MVP is demonstration "
-    "inventory. Seat locations are based on real Mercedes-Benz "
-    "Stadium sections; demo prices and quantities are not live "
-    "availability. Game and event data is sourced from the "
-    "Falcons schedule and Ticketmaster event data. Live seat-level "
-    "inventory requires authorized ticketing-partner access."
+    "inventory. Game and event data is sourced from the "
+    "Falcons schedule and Ticketmaster event data; live "
+    "seat-level inventory requires authorized "
+    "ticketing-partner access."
 )
 
 # ============================================================
