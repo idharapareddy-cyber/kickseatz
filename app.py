@@ -6,6 +6,7 @@ import csv
 import io
 import statistics
 import math
+from urllib.parse import urlencode
 from datetime import datetime
 import requests
 import streamlit as st
@@ -33,13 +34,11 @@ TOP_PICKS_ENABLED = str(
 
 
 def _add_api_key_to_image_url(url, api_key):
-    """Keep Ticketmaster secrets server-side.
+    if not url or not api_key:
+        return url
 
-    Top Picks image URLs may require authentication, but appending the API key
-    would expose the secret in the user's browser. Until a server-side proxy is
-    available, return the original URL only when it is already authenticated.
-    """
-    return str(url) if url else None
+    separator = "&" if "?" in str(url) else "?"
+    return f"{url}{separator}{urlencode({'apikey': api_key})}"
 
 
 @st.cache_data(ttl=60)
@@ -191,143 +190,8 @@ def load_top_picks(
         return [], f"Top Picks request failed: {exc}"
 
 
-# ============================================================
-# INVENTORY PROVIDER LAYER
-# ============================================================
 
-DEMO_INVENTORY_SOURCE = "KickSeatz Demo Inventory"
-LIVE_INVENTORY_SOURCE = "Ticketmaster Top Picks"
-
-
-def _stable_live_ticket_id(event_id, pick, index):
-    """Create a stable negative ID for a live pick without colliding with DB IDs."""
-    import hashlib
-
-    raw = "|".join([
-        str(event_id or ""),
-        str(pick.get("section") or ""),
-        str(pick.get("row") or ""),
-        str(pick.get("total_price") or ""),
-        str(index),
-    ])
-    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
-    return -int(digest[:12], 16)
-
-
-def normalize_live_pick_to_ticket(pick, game, event_id, index, requested_quantity):
-    """Convert a provider response into KickSeatz's internal ticket schema."""
-    price = pick.get("total_price")
-    if price is None:
-        price = pick.get("face_value")
-
-    try:
-        price = float(price)
-    except (TypeError, ValueError):
-        return None
-
-    if price <= 0:
-        return None
-
-    return {
-        "id": _stable_live_ticket_id(event_id, pick, index),
-        "week": game.get("week"),
-        "opponent": game.get("opponent"),
-        "game_date": game.get("game_date"),
-        "section": pick.get("section") or "N/A",
-        "row": pick.get("row") or "N/A",
-        "price": price,
-        "available_quantity": max(1, int(requested_quantity)),
-        "source": LIVE_INVENTORY_SOURCE,
-        "last_updated": datetime.now().isoformat(),
-        "ticketmaster_event_id": event_id,
-        "provider_quality": pick.get("quality"),
-        "provider_area": pick.get("area"),
-        "provider_description": pick.get("description"),
-    }
-
-
-@st.cache_data(ttl=60)
-def load_live_inventory_for_game(event_id, game, quantity=2, max_price=None):
-    """Fetch live provider inventory and normalize it for the existing scoring engine."""
-    if not TOP_PICKS_ENABLED:
-        return [], "Live Top Picks is disabled."
-
-    picks, error = load_top_picks(
-        event_id,
-        quantity=quantity,
-        max_price=max_price,
-    )
-
-    if error:
-        return [], error
-
-    normalized = []
-    for index, pick in enumerate(picks, start=1):
-        ticket = normalize_live_pick_to_ticket(
-            pick,
-            game,
-            event_id,
-            index,
-            quantity,
-        )
-        if ticket:
-            normalized.append(ticket)
-
-    return normalized, None
-
-
-def get_active_inventory_for_request(
-    base_inventory,
-    selected_week,
-    ticket_count,
-    budget,
-):
-    """
-    Keep the DB inventory as the canonical MVP dataset.
-
-    Once authorized Top Picks access is enabled and the user selects a specific
-    game, live provider inventory replaces the demo rows for that matchup. The
-    recommendation engine still receives the same internal ticket schema, so
-    the scoring/filter/Opportunity Engine code does not need a rewrite.
-    """
-    if not TOP_PICKS_ENABLED or selected_week is None:
-        return base_inventory, None
-
-    game = None
-    games = master_dataset.get("games", []) if isinstance(master_dataset, dict) else []
-    for candidate_game in games:
-        if isinstance(candidate_game, dict) and normalize_week(candidate_game.get("week")) == normalize_week(selected_week):
-            game = candidate_game
-            break
-
-    if not game:
-        return base_inventory, "Selected game could not be matched to the schedule."
-
-    event_id = game.get("ticketmaster_event_id")
-    if not event_id:
-        return base_inventory, "Selected game has no Ticketmaster event ID."
-
-    live_inventory, error = load_live_inventory_for_game(
-        event_id,
-        game,
-        quantity=ticket_count,
-        max_price=budget,
-    )
-
-    if live_inventory:
-        return live_inventory, None
-
-    return base_inventory, error or "No live inventory was returned; using KickSeatz demo inventory."
-
-
-@st.cache_data(ttl=60)
-def get_inventory_provider_label(live_active=False):
-    if live_active:
-        return LIVE_INVENTORY_SOURCE
-    return DEMO_INVENTORY_SOURCE
-
-
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def load_ticketmaster_events():
     """Load Falcons event metadata without taking down the whole app if TM is unavailable."""
     if not TICKETMASTER_API_KEY:
@@ -655,6 +519,163 @@ st.markdown("""
 # DATA LOADING
 # ============================================================
 
+# ============================================================
+# 2026 FALCONS SCHEDULE + DEMO INVENTORY
+# ============================================================
+
+# Official 2026 schedule structure. Dates/times are kept here as a
+# fallback so the app can still show the full season if the local JSON
+# is incomplete. Ticket prices/quantities generated below are DEMO data,
+# not live Ticketmaster availability.
+FALCONS_2026_SCHEDULE = [
+    {"week": 1, "opponent": "Pittsburgh Steelers", "game_date": "2026-09-13", "home": False},
+    {"week": 2, "opponent": "Carolina Panthers", "game_date": "2026-09-20", "home": True},
+    {"week": 3, "opponent": "Green Bay Packers", "game_date": "2026-09-24", "home": False},
+    {"week": 4, "opponent": "New Orleans Saints", "game_date": "2026-10-05", "home": False},
+    {"week": 5, "opponent": "Baltimore Ravens", "game_date": "2026-10-11", "home": True},
+    {"week": 6, "opponent": "Chicago Bears", "game_date": "2026-10-18", "home": True},
+    {"week": 7, "opponent": "San Francisco 49ers", "game_date": "2026-10-25", "home": True},
+    {"week": 8, "opponent": "Tampa Bay Buccaneers", "game_date": "2026-11-01", "home": False},
+    # The NFL lists Cincinnati at Atlanta in Week 9, but the game is
+    # designated for Madrid rather than Mercedes-Benz Stadium.
+    {"week": 9, "opponent": "Cincinnati Bengals", "game_date": "2026-11-08", "home": False, "neutral_site": True, "location": "Madrid"},
+    {"week": 10, "opponent": "Kansas City Chiefs", "game_date": "2026-11-15", "home": True},
+    {"week": 11, "opponent": "BYE", "game_date": "2026-11-22", "home": False, "bye": True},
+    {"week": 12, "opponent": "Minnesota Vikings", "game_date": "2026-11-29", "home": False},
+    {"week": 13, "opponent": "Detroit Lions", "game_date": "2026-12-06", "home": True},
+    {"week": 14, "opponent": "Cleveland Browns", "game_date": "2026-12-13", "home": False},
+    {"week": 15, "opponent": "Washington Commanders", "game_date": "2026-12-20", "home": False},
+    {"week": 16, "opponent": "Tampa Bay Buccaneers", "game_date": None, "home": True},
+    {"week": 17, "opponent": "New Orleans Saints", "game_date": "2027-01-03", "home": True},
+    {"week": 18, "opponent": "Carolina Panthers", "game_date": None, "home": False},
+]
+
+# Real Mercedes-Benz Stadium section references used for the demo layout.
+# These are seating locations, not claims of current availability.
+DEMO_HOME_SECTIONS = [
+    ("101", "Lower Bowl", 155),
+    ("105", "Lower Bowl", 175),
+    ("116", "Lower Bowl", 145),
+    ("123", "Lower Bowl", 125),
+    ("133", "Lower Bowl", 165),
+    ("210", "Upper Bowl", 85),
+    ("220", "Upper Bowl", 95),
+    ("234", "Upper Bowl", 78),
+    ("301", "Upper Bowl", 62),
+    ("318", "Upper Bowl", 68),
+    ("333", "Upper Bowl", 72),
+    ("346", "Upper Bowl", 58),
+]
+
+
+def _demo_week(value):
+    """Small local week parser used before the main scoring helpers load."""
+    match = re.search(r"\d+", str(value or ""))
+    return int(match.group()) if match else None
+
+
+DEMO_OPPONENT_RANKINGS = {
+    "Pittsburgh Steelers": 21,
+    "Carolina Panthers": 23,
+    "Green Bay Packers": 12,
+    "New Orleans Saints": 22,
+    "Baltimore Ravens": 6,
+    "Chicago Bears": 11,
+    "San Francisco 49ers": 17,
+    "Tampa Bay Buccaneers": 18,
+    "Cincinnati Bengals": 7,
+    "Kansas City Chiefs": 14,
+    "Minnesota Vikings": 19,
+    "Detroit Lions": 15,
+    "Cleveland Browns": 30,
+    "Washington Commanders": 31,
+}
+
+
+def ensure_falcons_schedule(dataset):
+    """Merge the verified 2026 Falcons schedule into the local dataset."""
+    if not isinstance(dataset, dict):
+        dataset = {"games": []}
+
+    existing = dataset.get("games", [])
+    if not isinstance(existing, list):
+        existing = []
+
+    by_week = {
+        _demo_week(game.get("week")): game
+        for game in existing
+        if isinstance(game, dict) and _demo_week(game.get("week")) is not None
+    }
+
+    merged = []
+    for official_game in FALCONS_2026_SCHEDULE:
+        current = dict(by_week.get(official_game["week"], {}))
+        current.update(official_game)
+        merged.append(current)
+
+    dataset["games"] = merged
+    return dataset
+
+
+def build_demo_home_inventory(existing_inventory, dataset):
+    """Fill out realistic demo inventory for Atlanta home games only.
+
+    Prices and quantities are deliberately labeled demo data. The future
+    Ticketmaster adapter can replace these rows with live offers without
+    changing the recommendation engine.
+    """
+    inventory = list(existing_inventory or [])
+    existing_keys = {
+        (_demo_week(t.get("week")), str(t.get("section")))
+        for t in inventory
+    }
+
+    games = dataset.get("games", []) if isinstance(dataset, dict) else []
+    demo_id = -1000
+
+    for game in games:
+        if not game.get("home") or game.get("bye") or game.get("neutral_site"):
+            continue
+
+        week = _demo_week(game.get("week"))
+        opponent = game.get("opponent")
+        game_date = game.get("game_date")
+
+        if week is None or not opponent:
+            continue
+
+        opponent_rank = DEMO_OPPONENT_RANKINGS.get(opponent, 20)
+        # Stronger opponents get a modest demo demand premium.
+        demand_adjustment = max(0, 18 - opponent_rank) * 2
+
+        for index, (section, area, base_price) in enumerate(DEMO_HOME_SECTIONS):
+            key = (week, section)
+            if key in existing_keys:
+                continue
+
+            row = str((index % 8) + 1)
+            price = max(45, base_price + demand_adjustment + ((week + index) % 3) * 5)
+            quantity = 2 + ((week + index) % 5)
+
+            inventory.append({
+                "id": demo_id,
+                "week": week,
+                "opponent": opponent,
+                "game_date": game_date,
+                "section": section,
+                "row": row,
+                "price": float(price),
+                "available_quantity": quantity,
+                "source": "KickSeatz Demo Inventory",
+                "last_updated": datetime.now().isoformat(),
+                "demo_area": area,
+            })
+            existing_keys.add(key)
+            demo_id -= 1
+
+    return inventory
+
+
 @st.cache_data
 def load_master_dataset(path):
     with open(path, "r", encoding="utf-8") as f:
@@ -840,6 +861,8 @@ try:
         MASTER_DATA_PATH
     )
 
+    master_dataset = ensure_falcons_schedule(master_dataset)
+
     ticketmaster_events = load_ticketmaster_events()
     
     if isinstance(master_dataset, dict):
@@ -856,6 +879,14 @@ try:
 
     inventory = load_inventory(
         DB_PATH
+    )
+
+    # Expand the tiny local dataset into a useful, transparent demo catalog.
+    # These are modeled from real MBS section locations, but prices and
+    # availability are not represented as live Ticketmaster inventory.
+    inventory = build_demo_home_inventory(
+        inventory,
+        master_dataset,
     )
 
     record_price_history(
@@ -1308,11 +1339,9 @@ def calculate_opportunity_score(ticket, game, eligible_pairs, budget, ticket_cou
     else:
         seat_value_score = 50
 
-    if budget > 0 and current_price > 0:
-        # A good opportunity should not get extra credit merely for consuming
-        # more of the user's budget. Reward price efficiency instead.
+    if budget > 0:
         utilization = current_price / budget
-        budget_efficiency_score = _clamp(100 - utilization * 55)
+        budget_efficiency_score = _clamp(100 - abs(utilization - 0.75) * 140)
     else:
         budget_efficiency_score = 50
 
@@ -1695,22 +1724,27 @@ def get_reasons(
 
     reasons = []
 
-    opponent_rank = OPPONENT_POWER_RANKINGS.get(
+    opponent_rating = OPPONENT_POWER_RANKINGS.get(
         opponent,
-        32
+        70
     )
 
-    if opponent_rank <= 8:
+    if opponent_rating >= 90:
         reasons.append(
-            f"{opponent} is ranked #{opponent_rank} in KickSeatz's opponent power-ranking data."
+            f"{opponent} has a strong opponent rating "
+            f"of {opponent_rating}/100."
         )
-    elif opponent_rank <= 16:
+
+    elif opponent_rating >= 80:
         reasons.append(
-            f"{opponent} is ranked #{opponent_rank} in KickSeatz's opponent power-ranking data."
+            f"{opponent} has an above-average opponent rating "
+            f"of {opponent_rating}/100."
         )
+
     else:
         reasons.append(
-            f"{opponent} is ranked #{opponent_rank} in KickSeatz's opponent power-ranking data."
+            f"{opponent} has an opponent rating of "
+            f"{opponent_rating}/100."
         )
 
     if game.get("home_game"):
@@ -2695,9 +2729,6 @@ st.sidebar.caption(
     "KickSeatz MVP • Atlanta Falcons 2026"
 )
 st.sidebar.caption(
-    f"Seat inventory source: {DEMO_INVENTORY_SOURCE}."
-)
-st.sidebar.caption(
     "Ticketmaster event data refreshes through a 5-minute cache."
 )
 
@@ -2707,34 +2738,6 @@ if st.sidebar.button(
     help="Clear cached API data and reload the app."
 ):
     clear_app_cache_and_rerun()
-
-# ============================================================
-# ACTIVE INVENTORY PROVIDER
-# ============================================================
-
-# The database remains the canonical demo/development inventory. When Top Picks
-# is authorized, the adapter can replace a selected game's rows with live
-# provider data while preserving the exact same internal ticket schema.
-base_inventory = inventory
-active_inventory, live_inventory_message = get_active_inventory_for_request(
-    base_inventory,
-    selected_week,
-    ticket_count,
-    budget,
-)
-live_inventory_active = active_inventory is not base_inventory
-
-if live_inventory_active:
-    inventory = active_inventory
-    record_price_history(inventory)
-
-if TOP_PICKS_ENABLED and selected_week is not None and live_inventory_message and not live_inventory_active:
-    st.info(
-        f"Live seat inventory is unavailable for this matchup right now, so KickSeatz is using {DEMO_INVENTORY_SOURCE}. "
-        f"{live_inventory_message}"
-    )
-
-provider_label = get_inventory_provider_label(live_inventory_active)
 
 # ============================================================
 # CANDIDATES
@@ -4348,7 +4351,7 @@ if len(rate_options) >= 2:
                 )
 
                 rank_text = (
-                    "🏆 Highest Rating"
+                    "🏆 Best Value"
                     if t["id"] == winner[0]["id"]
                     else f"Option {i}"
                 )
@@ -4415,7 +4418,7 @@ if len(rate_options) >= 2:
                 )
 
         st.success(
-            f"The highest KickSeatz Ticket Rating in this comparison is "
+            f"KickSeatz's strongest value is "
             f"Falcons vs {winner[1]['opponent']} "
             f"at ${winner[0]['price']:.0f}/ticket "
             f"({winner[2]['score']}/100)."
@@ -4547,8 +4550,7 @@ else:
     )
 
 st.caption(
-    f"Current seat-level source: {provider_label}. The scoring engine is provider-neutral; "
-    "authorized Ticketmaster Top Picks access can replace the demo rows without changing the recommendation logic."
+    "The app uses live event metadata now; live seat-level inventory depends on authorized Ticketmaster partner access."
 )
 
 # ============================================================
@@ -4561,7 +4563,7 @@ st.markdown(
 )
 
 freshness = get_data_freshness()
-fresh_col1, fresh_col2, fresh_col3, fresh_col4 = st.columns(4)
+fresh_col1, fresh_col2, fresh_col3 = st.columns(3)
 
 with fresh_col1:
     if freshness:
@@ -4592,10 +4594,6 @@ with fresh_col3:
         else "Seat-level inventory will use authorized partner access when available."
     )
 
-with fresh_col4:
-    st.metric("Active Source", "Live" if live_inventory_active else "Demo")
-    st.caption(provider_label)
-
 # ============================================================
 # DATA NOTICE
 # ============================================================
@@ -4608,10 +4606,11 @@ st.caption(
 
 st.caption(
     "Ticket inventory shown in this MVP is demonstration "
-    "inventory. Game and event data is sourced from the "
-    "Falcons schedule and Ticketmaster event data; live "
-    "seat-level inventory requires authorized "
-    "ticketing-partner access."
+    "inventory. Seat locations are based on real Mercedes-Benz "
+    "Stadium sections; demo prices and quantities are not live "
+    "availability. Game and event data is sourced from the "
+    "Falcons schedule and Ticketmaster event data. Live seat-level "
+    "inventory requires authorized ticketing-partner access."
 )
 
 # ============================================================
