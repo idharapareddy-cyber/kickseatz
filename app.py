@@ -470,6 +470,54 @@ MBS_HOME_GAME_BASELINE = [
     },
 ]
 
+
+def ensure_home_schedule(dataset):
+    """
+    Guarantee that the current Mercedes-Benz Stadium home games are
+    present in the in-memory schedule, even when the older local JSON
+    contains only the original four games. Existing game records are
+    preserved; missing home games are appended.
+    """
+    if not isinstance(dataset, dict):
+        dataset = {"games": []}
+
+    games = dataset.get("games", [])
+    if not isinstance(games, list):
+        games = []
+
+    by_week = {}
+    for game in games:
+        if not isinstance(game, dict):
+            continue
+        match = re.search(r"\d+", str(game.get("week", "")))
+        if match:
+            by_week[int(match.group())] = game
+
+    for home_game in MBS_HOME_GAME_BASELINE:
+        week = int(home_game["week"])
+        if week not in by_week:
+            new_game = dict(home_game)
+            new_game.update({
+                "home_game": True,
+                "venue": "Mercedes-Benz Stadium",
+            })
+            games.append(new_game)
+            by_week[week] = new_game
+        else:
+            by_week[week].setdefault("home_game", True)
+            by_week[week].setdefault("venue", "Mercedes-Benz Stadium")
+
+    games.sort(
+        key=lambda game: (
+            int(re.search(r"\d+", str(game.get("week", "999"))).group())
+            if re.search(r"\d+", str(game.get("week", "")))
+            else 999
+        )
+    )
+
+    dataset["games"] = games
+    return dataset
+
 # Real Mercedes-Benz Stadium seating sections documented by the
 # stadium. We use representative sections across the 100/200/300
 # levels plus documented club sections. We do NOT claim these rows
@@ -705,68 +753,125 @@ def ensure_mbs_demo_inventory(db_path):
         conn.close()
 
 
-def ensure_home_schedule(dataset):
-    """
-    Guarantee that the current Mercedes-Benz Stadium home schedule
-    exists in the local master dataset without deleting existing games.
+# ============================================================
+# VISUAL BRANDING / MATCHUP HELPERS
+# ============================================================
 
-    The schedule is the baseline for the demo inventory. Ticketmaster
-    event enrichment runs afterward and can add live event metadata.
-    """
-    if not isinstance(dataset, dict):
-        dataset = {"games": []}
+NFL_LOGO_CODES = {
+    "Atlanta Falcons": "atl",
+    "Carolina Panthers": "car",
+    "Baltimore Ravens": "bal",
+    "Chicago Bears": "chi",
+    "San Francisco 49ers": "sf",
+    "Kansas City Chiefs": "kc",
+    "Detroit Lions": "det",
+    "Tampa Bay Buccaneers": "tb",
+    "New Orleans Saints": "no",
+    "Pittsburgh Steelers": "pit",
+    "Green Bay Packers": "gb",
+    "Cleveland Browns": "cle",
+    "Washington Commanders": "wsh",
+    "Minnesota Vikings": "min",
+    "Cincinnati Bengals": "cin",
+}
 
-    games = dataset.get("games")
-    if not isinstance(games, list):
-        games = []
 
-    def week_key(value):
-        match = re.search(r"\d+", str(value or ""))
-        return int(match.group()) if match else None
+def get_nfl_logo_url(team_name):
+    """Return an ESPN-hosted NFL team logo URL for visual branding."""
+    code = NFL_LOGO_CODES.get(str(team_name or "").strip())
+    if not code:
+        return None
+    return f"https://a.espncdn.com/i/teamlogos/nfl/500/{code}.png"
 
-    # Index existing games by normalized week so an older JSON file with
-    # only a few games can be safely expanded without creating duplicates.
-    by_week = {}
-    for game in games:
-        if isinstance(game, dict):
-            key = week_key(game.get("week"))
-            if key is not None and key not in by_week:
-                by_week[key] = game
 
-    for home_game in MBS_HOME_GAME_BASELINE:
-        week = int(home_game["week"])
-        existing = by_week.get(week)
+def _visual_game_date(value):
+    if not value:
+        return "Date TBD"
+    try:
+        parsed = datetime.fromisoformat(str(value)).date()
+        return parsed.strftime("%b %d, %Y").replace(" 0", " ")
+    except (ValueError, TypeError):
+        return str(value)
 
-        if existing is None:
-            existing = {"week": week}
-            games.append(existing)
-            by_week[week] = existing
 
-        # These fields are the schedule baseline. They are deliberately
-        # deterministic so the app does not depend on an old local JSON
-        # file containing the full 2026 schedule.
-        existing.update(
-            {
-                "week": week,
-                "opponent": home_game["opponent"],
-                "game_date": home_game["game_date"],
-                "home_game": True,
-                "venue": "Mercedes-Benz Stadium",
-                "city": "Atlanta, GA",
-                "inventory_mode": "Demo MBS baseline",
-            }
+def render_home_matchup_card(game):
+    """Return a visual matchup card for a Falcons home-game baseline."""
+    opponent = str(game.get("opponent", "Opponent"))
+    week = game.get("week", "—")
+    game_date = _visual_game_date(game.get("game_date"))
+
+    falcons_logo = get_nfl_logo_url("Atlanta Falcons")
+    opponent_logo = get_nfl_logo_url(opponent)
+
+    if falcons_logo:
+        falcons_img = (
+            f'<img class="matchup-logo" src="{falcons_logo}" width="72" height="72" '
+            'loading="lazy" decoding="async" alt="Atlanta Falcons logo">'
+        )
+    else:
+        falcons_img = '<div class="logo-fallback" aria-label="Atlanta Falcons">ATL</div>'
+
+    if opponent_logo:
+        opponent_img = (
+            f'<img class="matchup-logo" src="{opponent_logo}" width="72" height="72" '
+            f'loading="lazy" decoding="async" alt="{opponent} logo">'
+        )
+    else:
+        opponent_img = f'<div class="logo-fallback" aria-label="{opponent}">NFL</div>'
+
+    return f'''
+    <article class="matchup-card" aria-label="Week {week}: Atlanta Falcons vs {opponent}">
+        <div class="matchup-topline">
+            <span>WEEK {week}</span>
+            <span>HOME</span>
+        </div>
+        <div class="matchup-teams">
+            <div class="matchup-team">
+                {falcons_img}
+                <div class="matchup-team-name">Falcons</div>
+            </div>
+            <div class="matchup-vs" aria-hidden="true">VS</div>
+            <div class="matchup-team">
+                {opponent_img}
+                <div class="matchup-team-name">{opponent}</div>
+            </div>
+        </div>
+        <div class="matchup-meta">
+            <span>📅 {game_date}</span>
+            <span>🏟️ Mercedes-Benz Stadium</span>
+        </div>
+    </article>
+    '''
+
+
+def render_mbs_baseline_visual():
+    """Visual section baseline; it is not a live availability map."""
+    level_data = [
+        ("100 Level", "Lower Bowl", ["101", "102", "105", "116", "123", "125", "131", "133"]),
+        ("200 Level", "Upper Bowl", ["210", "220", "234", "245", "246", "247"]),
+        ("300 Level", "Upper Bowl", ["301", "310", "318", "333", "346"]),
+    ]
+
+    rows = []
+    for level, label, sections in level_data:
+        pills = "".join(
+            f'<span class="section-pill">{section}</span>'
+            for section in sections
+        )
+        rows.append(
+            '<div class="baseline-level">'
+            f'<div><strong>{level}</strong><span>{label}</span></div>'
+            f'<div class="baseline-pills">{pills}</div>'
+            '</div>'
         )
 
-    # Keep the schedule ordered naturally by week. Preserve a BYE entry if
-    # the source dataset has one, but do not manufacture ticket inventory for it.
-    games.sort(
-        key=lambda game: (
-            week_key(game.get("week")) is None,
-            week_key(game.get("week")) if week_key(game.get("week")) is not None else 999,
-        )
+    return (
+        '<div class="mbs-visual" role="img" aria-label="Mercedes-Benz Stadium seating baseline showing 100, 200, and 300 level sections">'
+        '<div class="mbs-field">FIELD / PLAYING SURFACE</div>'
+        + "".join(rows)
+        + '<div class="mbs-note">Section layout baseline • not live Ticketmaster availability</div>'
+        '</div>'
     )
-    dataset["games"] = games
-    return dataset
 
 
 # ============================================================
@@ -804,6 +909,162 @@ st.markdown("""
 .mobile-note {
     font-size: 0.85rem;
 }
+
+.matchup-card {
+    border: 1px solid rgba(100,116,139,.20);
+    border-radius: 20px;
+    padding: 18px 18px 16px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    box-shadow: 0 8px 24px rgba(15,23,42,.07);
+    margin: 6px 0 14px;
+}
+
+.matchup-topline {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .08em;
+}
+
+.matchup-teams {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 10px;
+    margin: 15px 0 12px;
+}
+
+.matchup-team {
+    text-align: center;
+    min-width: 0;
+}
+
+.matchup-logo {
+    display: block;
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    margin: 0 auto 7px;
+}
+
+.logo-fallback {
+    width: 72px;
+    height: 72px;
+    margin: 0 auto 7px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: #111827;
+    color: white;
+    font-weight: 900;
+    font-size: 13px;
+}
+
+.matchup-team-name {
+    font-weight: 850;
+    font-size: 14px;
+    line-height: 1.2;
+}
+
+.matchup-vs {
+    font-size: 12px;
+    font-weight: 900;
+    color: #a71930;
+    letter-spacing: .08em;
+}
+
+.matchup-meta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px 12px;
+    color: #475569;
+    font-size: 12px;
+    text-align: center;
+}
+
+.recommendation-matchup {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 8px 0 4px;
+}
+
+.recommendation-matchup img {
+    display: block;
+    width: 56px;
+    height: 56px;
+    object-fit: contain;
+}
+
+.mbs-visual {
+    border: 1px solid rgba(100,116,139,.20);
+    border-radius: 20px;
+    padding: 18px;
+    background: linear-gradient(180deg, #111827 0%, #0f172a 100%);
+    color: #f8fafc;
+    box-shadow: 0 8px 26px rgba(15,23,42,.10);
+}
+
+.mbs-field {
+    text-align: center;
+    border: 2px solid rgba(255,255,255,.55);
+    border-radius: 14px;
+    padding: 13px 10px;
+    margin-bottom: 12px;
+    font-weight: 900;
+    letter-spacing: .10em;
+    font-size: 12px;
+}
+
+.baseline-level {
+    border-top: 1px solid rgba(255,255,255,.10);
+    padding: 13px 0;
+}
+
+.baseline-level > div:first-child {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 9px;
+}
+
+.baseline-level > div:first-child span {
+    color: #cbd5e1;
+    font-size: 12px;
+}
+
+.baseline-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.section-pill {
+    display: inline-flex;
+    min-width: 42px;
+    min-height: 32px;
+    align-items: center;
+    justify-content: center;
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.10);
+    border: 1px solid rgba(255,255,255,.12);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.mbs-note {
+    padding-top: 10px;
+    color: #cbd5e1;
+    font-size: 11px;
+    text-align: center;
+}
+
 
 .feature-card {
     border: 1px solid rgba(100,116,139,.22);
@@ -2216,13 +2477,54 @@ def get_deal_assessment(
 # ============================================================
 
 def get_game_selector_options():
-    games = (
-        master_dataset.get("games", [])
-        if isinstance(master_dataset, dict)
-        else []
+    """
+    Build the game selector from the ticket inventory database first.
+
+    The database is the source of truth for which games currently have
+    ticket inventory. This prevents an older JSON schedule from limiting
+    the selector to the original four games.
+    """
+    game_map = {}
+
+    for ticket in inventory:
+        week = normalize_week(ticket.get("week"))
+        opponent = str(
+            ticket.get("opponent", "Unknown opponent")
+        ).strip()
+
+        if week is None:
+            continue
+
+        if week not in game_map:
+            game_map[week] = {
+                "week": week,
+                "opponent": opponent,
+                "game_date": ticket.get("game_date"),
+                "home_game": True,
+                "venue": "Mercedes-Benz Stadium",
+            }
+
+    valid_games = list(game_map.values())
+    valid_games.sort(
+        key=lambda game: normalize_week(game.get("week")) or 999
     )
-    valid_games = [g for g in games if isinstance(g, dict)]
-    valid_games.sort(key=lambda g: normalize_week(g.get("week")) or 999)
+
+    # Fall back to the complete in-memory schedule if no inventory rows
+    # are available, preserving the app's normal behavior.
+    if not valid_games:
+        games = (
+            master_dataset.get("games", [])
+            if isinstance(master_dataset, dict)
+            else []
+        )
+        valid_games = [
+            game for game in games
+            if isinstance(game, dict)
+        ]
+        valid_games.sort(
+            key=lambda game: normalize_week(game.get("week")) or 999
+        )
+
     return valid_games
 
 
@@ -2788,6 +3090,45 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================
+# HOME GAME VISUALS
+# ============================================================
+
+home_visual_games = [
+    game for game in get_game_selector_options()
+    if game.get("home_game", True)
+    and str(game.get("venue", "Mercedes-Benz Stadium")) == "Mercedes-Benz Stadium"
+]
+
+if home_visual_games:
+    st.markdown(
+        '<h2 class="section-title">🏟️ 2026 Home Matchups</h2>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Real Falcons home schedule • Mercedes-Benz Stadium seating baseline • "
+        "prices and availability remain demo data until live Ticketmaster access is enabled."
+    )
+
+    for start in range(0, len(home_visual_games), 2):
+        pair = home_visual_games[start:start + 2]
+        columns = st.columns(len(pair))
+        for column, matchup in zip(columns, pair):
+            with column:
+                st.markdown(
+                    render_home_matchup_card(matchup),
+                    unsafe_allow_html=True,
+                )
+
+    st.markdown(
+        '<h2 class="section-title">🗺️ Mercedes-Benz Stadium Baseline</h2>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        render_mbs_baseline_visual(),
+        unsafe_allow_html=True,
+    )
+
+# ============================================================
 # SIDEBAR
 # ============================================================
 
@@ -3147,6 +3488,21 @@ with left:
     st.markdown(
         f"### Atlanta Falcons vs {game['opponent']}"
     )
+
+    rec_falcons_logo = get_nfl_logo_url("Atlanta Falcons")
+    rec_opponent_logo = get_nfl_logo_url(game.get("opponent"))
+
+    if rec_falcons_logo and rec_opponent_logo:
+        st.markdown(
+            f"""
+            <div class="recommendation-matchup">
+                <div><img src="{rec_falcons_logo}" width="56" height="56" loading="lazy" decoding="async" alt="Atlanta Falcons logo"></div>
+                <div class="matchup-vs">VS</div>
+                <div><img src="{rec_opponent_logo}" width="56" height="56" loading="lazy" decoding="async" alt="{game.get('opponent')} logo"></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     game_type = (
         "Home"
