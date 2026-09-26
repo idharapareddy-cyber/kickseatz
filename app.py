@@ -705,6 +705,70 @@ def ensure_mbs_demo_inventory(db_path):
         conn.close()
 
 
+def ensure_home_schedule(dataset):
+    """
+    Guarantee that the current Mercedes-Benz Stadium home schedule
+    exists in the local master dataset without deleting existing games.
+
+    The schedule is the baseline for the demo inventory. Ticketmaster
+    event enrichment runs afterward and can add live event metadata.
+    """
+    if not isinstance(dataset, dict):
+        dataset = {"games": []}
+
+    games = dataset.get("games")
+    if not isinstance(games, list):
+        games = []
+
+    def week_key(value):
+        match = re.search(r"\d+", str(value or ""))
+        return int(match.group()) if match else None
+
+    # Index existing games by normalized week so an older JSON file with
+    # only a few games can be safely expanded without creating duplicates.
+    by_week = {}
+    for game in games:
+        if isinstance(game, dict):
+            key = week_key(game.get("week"))
+            if key is not None and key not in by_week:
+                by_week[key] = game
+
+    for home_game in MBS_HOME_GAME_BASELINE:
+        week = int(home_game["week"])
+        existing = by_week.get(week)
+
+        if existing is None:
+            existing = {"week": week}
+            games.append(existing)
+            by_week[week] = existing
+
+        # These fields are the schedule baseline. They are deliberately
+        # deterministic so the app does not depend on an old local JSON
+        # file containing the full 2026 schedule.
+        existing.update(
+            {
+                "week": week,
+                "opponent": home_game["opponent"],
+                "game_date": home_game["game_date"],
+                "home_game": True,
+                "venue": "Mercedes-Benz Stadium",
+                "city": "Atlanta, GA",
+                "inventory_mode": "Demo MBS baseline",
+            }
+        )
+
+    # Keep the schedule ordered naturally by week. Preserve a BYE entry if
+    # the source dataset has one, but do not manufacture ticket inventory for it.
+    games.sort(
+        key=lambda game: (
+            week_key(game.get("week")) is None,
+            week_key(game.get("week")) if week_key(game.get("week")) is not None else 999,
+        )
+    )
+    dataset["games"] = games
+    return dataset
+
+
 # ============================================================
 # CUSTOM CSS
 # ============================================================
