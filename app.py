@@ -6,7 +6,6 @@ import csv
 import io
 import statistics
 import math
-from urllib.parse import urlencode
 from datetime import datetime
 import requests
 import streamlit as st
@@ -34,11 +33,13 @@ TOP_PICKS_ENABLED = str(
 
 
 def _add_api_key_to_image_url(url, api_key):
-    if not url or not api_key:
-        return url
+    """Keep Ticketmaster secrets server-side.
 
-    separator = "&" if "?" in str(url) else "?"
-    return f"{url}{separator}{urlencode({'apikey': api_key})}"
+    Top Picks image URLs may require authentication, but appending the API key
+    would expose the secret in the user's browser. Until a server-side proxy is
+    available, return the original URL only when it is already authenticated.
+    """
+    return str(url) if url else None
 
 
 @st.cache_data(ttl=60)
@@ -190,120 +191,143 @@ def load_top_picks(
         return [], f"Top Picks request failed: {exc}"
 
 
+# ============================================================
+# INVENTORY PROVIDER LAYER
+# ============================================================
 
-def normalize_top_picks_to_inventory(live_picks, game, ticket_count):
-    """Convert Ticketmaster Top Picks into KickSeatz's normal ticket schema.
-
-    This is the adapter boundary: the recommendation engine continues to work
-    with the same ticket fields whether inventory came from SQLite or a future
-    authorized Ticketmaster Top Picks connection.
-    """
-    if not isinstance(live_picks, list) or not isinstance(game, dict):
-        return []
-
-    event_id = str(game.get("ticketmaster_event_id") or "").strip()
-    normalized = []
-
-    for index, pick in enumerate(live_picks):
-        if not isinstance(pick, dict):
-            continue
-
-        price = pick.get("total_price")
-        if price is None:
-            price = pick.get("face_value")
-
-        try:
-            price = float(price)
-        except (TypeError, ValueError):
-            continue
-
-        seats = pick.get("seats") or []
-        try:
-            seat_count = len(seats)
-        except TypeError:
-            seat_count = 0
-
-        available_quantity = max(
-            int(ticket_count or 1),
-            seat_count,
-            1,
-        )
-
-        section = str(pick.get("section") or "N/A")
-        row = str(pick.get("row") or "N/A")
-        offer_name = str(pick.get("offer_name") or "Ticketmaster Top Pick")
-        stable_id = (
-            f"tm_live_{event_id}_{index}_{section}_{row}_{offer_name}"
-        )
-
-        normalized.append(
-            {
-                "id": stable_id,
-                "event_id": event_id,
-                "week": game.get("week"),
-                "opponent": game.get("opponent"),
-                "game_date": game.get("game_date"),
-                "section": section,
-                "row": row,
-                "price": price,
-                "available_quantity": available_quantity,
-                "source": "Ticketmaster Top Picks (live)",
-                "last_updated": datetime.now().isoformat(),
-                "ticketmaster_quality": pick.get("quality"),
-                "ticketmaster_selection": pick.get("selection"),
-                "ticketmaster_type": pick.get("type"),
-                "ticketmaster_area": pick.get("area"),
-                "ticketmaster_area_description": pick.get("area_description"),
-                "ticketmaster_description": pick.get("description"),
-                "ticketmaster_listing_details": pick.get("listing_details"),
-                "ticketmaster_currency": pick.get("currency") or "USD",
-                "ticketmaster_offer_name": offer_name,
-                "ticketmaster_snapshot_url": pick.get("snapshot_url"),
-                "ticketmaster_vfs_url": pick.get("vfs_url"),
-                "ticketmaster_seats": seats,
-            }
-        )
-
-    return normalized
+DEMO_INVENTORY_SOURCE = "KickSeatz Demo Inventory"
+LIVE_INVENTORY_SOURCE = "Ticketmaster Top Picks"
 
 
-def load_live_inventory_for_game(game, ticket_count, budget):
-    """Fetch live Top Picks for one selected game when authorized access exists."""
+def _stable_live_ticket_id(event_id, pick, index):
+    """Create a stable negative ID for a live pick without colliding with DB IDs."""
+    import hashlib
+
+    raw = "|".join([
+        str(event_id or ""),
+        str(pick.get("section") or ""),
+        str(pick.get("row") or ""),
+        str(pick.get("total_price") or ""),
+        str(index),
+    ])
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+    return -int(digest[:12], 16)
+
+
+def normalize_live_pick_to_ticket(pick, game, event_id, index, requested_quantity):
+    """Convert a provider response into KickSeatz's internal ticket schema."""
+    price = pick.get("total_price")
+    if price is None:
+        price = pick.get("face_value")
+
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        return None
+
+    if price <= 0:
+        return None
+
+    return {
+        "id": _stable_live_ticket_id(event_id, pick, index),
+        "week": game.get("week"),
+        "opponent": game.get("opponent"),
+        "game_date": game.get("game_date"),
+        "section": pick.get("section") or "N/A",
+        "row": pick.get("row") or "N/A",
+        "price": price,
+        "available_quantity": max(1, int(requested_quantity)),
+        "source": LIVE_INVENTORY_SOURCE,
+        "last_updated": datetime.now().isoformat(),
+        "ticketmaster_event_id": event_id,
+        "provider_quality": pick.get("quality"),
+        "provider_area": pick.get("area"),
+        "provider_description": pick.get("description"),
+    }
+
+
+@st.cache_data(ttl=60)
+def load_live_inventory_for_game(event_id, game, quantity=2, max_price=None):
+    """Fetch live provider inventory and normalize it for the existing scoring engine."""
     if not TOP_PICKS_ENABLED:
-        return [], None
+        return [], "Live Top Picks is disabled."
 
-    if not isinstance(game, dict) or not game.get("ticketmaster_event_id"):
-        return [], "This matchup does not have a Ticketmaster event ID."
+    picks, error = load_top_picks(
+        event_id,
+        quantity=quantity,
+        max_price=max_price,
+    )
 
-    live_picks, error = load_top_picks(
-        game.get("ticketmaster_event_id"),
+    if error:
+        return [], error
+
+    normalized = []
+    for index, pick in enumerate(picks, start=1):
+        ticket = normalize_live_pick_to_ticket(
+            pick,
+            game,
+            event_id,
+            index,
+            quantity,
+        )
+        if ticket:
+            normalized.append(ticket)
+
+    return normalized, None
+
+
+def get_active_inventory_for_request(
+    base_inventory,
+    selected_week,
+    ticket_count,
+    budget,
+):
+    """
+    Keep the DB inventory as the canonical MVP dataset.
+
+    Once authorized Top Picks access is enabled and the user selects a specific
+    game, live provider inventory replaces the demo rows for that matchup. The
+    recommendation engine still receives the same internal ticket schema, so
+    the scoring/filter/Opportunity Engine code does not need a rewrite.
+    """
+    if not TOP_PICKS_ENABLED or selected_week is None:
+        return base_inventory, None
+
+    game = None
+    games = master_dataset.get("games", []) if isinstance(master_dataset, dict) else []
+    for candidate_game in games:
+        if isinstance(candidate_game, dict) and normalize_week(candidate_game.get("week")) == normalize_week(selected_week):
+            game = candidate_game
+            break
+
+    if not game:
+        return base_inventory, "Selected game could not be matched to the schedule."
+
+    event_id = game.get("ticketmaster_event_id")
+    if not event_id:
+        return base_inventory, "Selected game has no Ticketmaster event ID."
+
+    live_inventory, error = load_live_inventory_for_game(
+        event_id,
+        game,
         quantity=ticket_count,
         max_price=budget,
     )
 
-    return normalize_top_picks_to_inventory(
-        live_picks,
-        game,
-        ticket_count,
-    ), error
+    if live_inventory:
+        return live_inventory, None
+
+    return base_inventory, error or "No live inventory was returned; using KickSeatz demo inventory."
 
 
-def merge_live_inventory(base_inventory, live_inventory, selected_week):
-    """Replace local rows for the selected matchup only when live picks exist."""
-    if not live_inventory or selected_week is None:
-        return base_inventory
-
-    target_week = normalize_week(selected_week)
-    retained = [
-        ticket
-        for ticket in base_inventory
-        if normalize_week(ticket.get("week")) != target_week
-    ]
-
-    return retained + live_inventory
+@st.cache_data(ttl=60)
+def get_inventory_provider_label(live_active=False):
+    if live_active:
+        return LIVE_INVENTORY_SOURCE
+    return DEMO_INVENTORY_SOURCE
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def load_ticketmaster_events():
     """Load Falcons event metadata without taking down the whole app if TM is unavailable."""
     if not TICKETMASTER_API_KEY:
@@ -1284,9 +1308,11 @@ def calculate_opportunity_score(ticket, game, eligible_pairs, budget, ticket_cou
     else:
         seat_value_score = 50
 
-    if budget > 0:
+    if budget > 0 and current_price > 0:
+        # A good opportunity should not get extra credit merely for consuming
+        # more of the user's budget. Reward price efficiency instead.
         utilization = current_price / budget
-        budget_efficiency_score = _clamp(100 - abs(utilization - 0.75) * 140)
+        budget_efficiency_score = _clamp(100 - utilization * 55)
     else:
         budget_efficiency_score = 50
 
@@ -1669,27 +1695,22 @@ def get_reasons(
 
     reasons = []
 
-    opponent_rating = OPPONENT_POWER_RANKINGS.get(
+    opponent_rank = OPPONENT_POWER_RANKINGS.get(
         opponent,
-        70
+        32
     )
 
-    if opponent_rating >= 90:
+    if opponent_rank <= 8:
         reasons.append(
-            f"{opponent} has a strong opponent rating "
-            f"of {opponent_rating}/100."
+            f"{opponent} is ranked #{opponent_rank} in KickSeatz's opponent power-ranking data."
         )
-
-    elif opponent_rating >= 80:
+    elif opponent_rank <= 16:
         reasons.append(
-            f"{opponent} has an above-average opponent rating "
-            f"of {opponent_rating}/100."
+            f"{opponent} is ranked #{opponent_rank} in KickSeatz's opponent power-ranking data."
         )
-
     else:
         reasons.append(
-            f"{opponent} has an opponent rating of "
-            f"{opponent_rating}/100."
+            f"{opponent} is ranked #{opponent_rank} in KickSeatz's opponent power-ranking data."
         )
 
     if game.get("home_game"):
@@ -2674,6 +2695,9 @@ st.sidebar.caption(
     "KickSeatz MVP • Atlanta Falcons 2026"
 )
 st.sidebar.caption(
+    f"Seat inventory source: {DEMO_INVENTORY_SOURCE}."
+)
+st.sidebar.caption(
     "Ticketmaster event data refreshes through a 5-minute cache."
 )
 
@@ -2685,29 +2709,32 @@ if st.sidebar.button(
     clear_app_cache_and_rerun()
 
 # ============================================================
-# LIVE INVENTORY ADAPTER
+# ACTIVE INVENTORY PROVIDER
 # ============================================================
 
-live_inventory_active = False
-live_inventory_error = None
-live_inventory_count = 0
+# The database remains the canonical demo/development inventory. When Top Picks
+# is authorized, the adapter can replace a selected game's rows with live
+# provider data while preserving the exact same internal ticket schema.
+base_inventory = inventory
+active_inventory, live_inventory_message = get_active_inventory_for_request(
+    base_inventory,
+    selected_week,
+    ticket_count,
+    budget,
+)
+live_inventory_active = active_inventory is not base_inventory
 
-if TOP_PICKS_ENABLED and selected_week is not None:
-    selected_game = get_game_by_week(selected_week)
-    live_inventory, live_inventory_error = load_live_inventory_for_game(
-        selected_game,
-        ticket_count,
-        budget,
+if live_inventory_active:
+    inventory = active_inventory
+    record_price_history(inventory)
+
+if TOP_PICKS_ENABLED and selected_week is not None and live_inventory_message and not live_inventory_active:
+    st.info(
+        f"Live seat inventory is unavailable for this matchup right now, so KickSeatz is using {DEMO_INVENTORY_SOURCE}. "
+        f"{live_inventory_message}"
     )
 
-    if live_inventory:
-        inventory = merge_live_inventory(
-            inventory,
-            live_inventory,
-            selected_week,
-        )
-        live_inventory_active = True
-        live_inventory_count = len(live_inventory)
+provider_label = get_inventory_provider_label(live_inventory_active)
 
 # ============================================================
 # CANDIDATES
@@ -2735,17 +2762,6 @@ candidates = score_candidates(
 # ============================================================
 # TOP METRICS
 # ============================================================
-
-if live_inventory_active:
-    st.success(
-        f"Live Ticketmaster inventory is powering this recommendation • "
-        f"{live_inventory_count} live pick(s) matched your budget and ticket count."
-    )
-elif TOP_PICKS_ENABLED and live_inventory_error and selected_week is not None:
-    st.info(
-        "Live Ticketmaster inventory was unavailable for this matchup, "
-        "so KickSeatz kept the existing inventory instead."
-    )
 
 m1, m2, m3, m4 = st.columns(4)
 
@@ -4332,7 +4348,7 @@ if len(rate_options) >= 2:
                 )
 
                 rank_text = (
-                    "🏆 Best Value"
+                    "🏆 Highest Rating"
                     if t["id"] == winner[0]["id"]
                     else f"Option {i}"
                 )
@@ -4399,7 +4415,7 @@ if len(rate_options) >= 2:
                 )
 
         st.success(
-            f"KickSeatz's strongest value is "
+            f"The highest KickSeatz Ticket Rating in this comparison is "
             f"Falcons vs {winner[1]['opponent']} "
             f"at ${winner[0]['price']:.0f}/ticket "
             f"({winner[2]['score']}/100)."
@@ -4531,7 +4547,8 @@ else:
     )
 
 st.caption(
-    "The app uses live event metadata now; live seat-level inventory depends on authorized Ticketmaster partner access."
+    f"Current seat-level source: {provider_label}. The scoring engine is provider-neutral; "
+    "authorized Ticketmaster Top Picks access can replace the demo rows without changing the recommendation logic."
 )
 
 # ============================================================
@@ -4544,7 +4561,7 @@ st.markdown(
 )
 
 freshness = get_data_freshness()
-fresh_col1, fresh_col2, fresh_col3 = st.columns(3)
+fresh_col1, fresh_col2, fresh_col3, fresh_col4 = st.columns(4)
 
 with fresh_col1:
     if freshness:
@@ -4574,6 +4591,10 @@ with fresh_col3:
         "Live Top Picks is enabled." if TOP_PICKS_ENABLED
         else "Seat-level inventory will use authorized partner access when available."
     )
+
+with fresh_col4:
+    st.metric("Active Source", "Live" if live_inventory_active else "Demo")
+    st.caption(provider_label)
 
 # ============================================================
 # DATA NOTICE
