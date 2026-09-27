@@ -1088,14 +1088,21 @@ def render_nfl_matchup_card(game):
     )
 
 NFL_DEMO_SECTION_BLUEPRINT = [
-    ("101", "Lower Bowl", 72),
-    ("125", "Lower Bowl", 88),
-    ("201", "Upper Bowl", 58),
-    ("225", "Upper Bowl", 68),
-    ("305", "Upper Bowl", 50),
-    ("325", "Upper Bowl", 62),
+    # area label, synthetic section, base price, seat-position label, base quality
+    ("Lower Bowl", "Lower 1", 165, "Sideline", 9.4),
+    ("Lower Bowl", "Lower 2", 145, "Sideline", 9.0),
+    ("Lower Bowl", "Lower 3", 125, "Corner", 8.5),
+    ("Lower Bowl", "Lower 4", 105, "End Zone", 8.0),
+    ("Club / Premium", "Club 1", 195, "Premium", 9.8),
+    ("Club / Premium", "Club 2", 170, "Premium", 9.4),
+    ("Club / Premium", "Club 3", 150, "Premium", 9.1),
+    ("Upper Bowl", "Upper 1", 92, "Sideline", 7.4),
+    ("Upper Bowl", "Upper 2", 78, "Sideline", 7.0),
+    ("Upper Bowl", "Upper 3", 66, "Corner", 6.6),
+    ("Upper Bowl", "Upper 4", 56, "End Zone", 6.2),
+    ("Upper Bowl", "Upper 5", 48, "End Zone", 5.8),
 ]
-NFL_DEMO_ROWS = ["4", "8", "12"]
+NFL_DEMO_ROWS = ["1", "6", "12", "18"]
 
 
 def _demo_normalize_week(value):
@@ -1103,28 +1110,85 @@ def _demo_normalize_week(value):
     return int(match.group()) if match else str(value or "").strip().lower()
 
 
-def _demo_nfl_price(team, opponent, week, section_base, international=False):
-    """Create a stable synthetic price; never represents live market pricing."""
+def _demo_game_demand_multiplier(home_team, away_team, week, game_time=None, international=False):
+    """Create stable, non-live demand variation for demo marketplace listings."""
     seed = zlib.crc32(
-        f"2026|{team}|{opponent}|{week}".encode("utf-8")
-    ) % 21
-    matchup_multiplier = 0.90 + (seed / 100.0)
+        f"2026|{home_team}|{away_team}|{week}".encode("utf-8")
+    ) % 19
+    multiplier = 0.90 + (seed / 100.0)
+
+    # Division matchups get a modest synthetic rivalry premium.
+    if NFL_TEAM_DIVISIONS.get(home_team) and NFL_TEAM_DIVISIONS.get(home_team) == NFL_TEAM_DIVISIONS.get(away_team):
+        multiplier += 0.06
+
+    # Prime-time/international games get a modest demo premium.
+    time_text = str(game_time or "")
+    if time_text.startswith(("19:", "20:", "21:")):
+        multiplier += 0.04
     if international:
-        matchup_multiplier += 0.06
-    if team and opponent and NFL_TEAM_DIVISIONS.get(team) == NFL_TEAM_DIVISIONS.get(opponent):
-        matchup_multiplier += 0.05
-    row_multiplier = {"4": 1.16, "8": 1.00, "12": 0.92}
-    price = section_base * matchup_multiplier * row_multiplier.get("12", 1.0)
+        multiplier += 0.08
+
+    # Vary each market slightly so every stadium does not look identical.
+    venue_seed = zlib.crc32(
+        f"venue|{home_team}".encode("utf-8")
+    ) % 11
+    multiplier += venue_seed / 250.0
+    return round(multiplier, 4)
+
+
+def _demo_row_multiplier(row):
+    return {
+        "1": 1.10,
+        "6": 1.04,
+        "12": 0.97,
+        "18": 0.91,
+    }.get(str(row), 1.0)
+
+
+def _demo_quantity(home_team, away_team, week, section, row):
+    seed = zlib.crc32(
+        f"qty|2026|{home_team}|{away_team}|{week}|{section}|{row}".encode("utf-8")
+    ) % 100
+    if seed < 16:
+        return 1
+    if seed < 44:
+        return 2
+    if seed < 72:
+        return 3
+    if seed < 92:
+        return 4
+    return 5
+
+
+def _demo_nfl_price(team, opponent, week, section_base, international=False, game_time=None):
+    """Create a stable synthetic price; never represents live market pricing."""
+    multiplier = _demo_game_demand_multiplier(
+        team,
+        opponent,
+        week,
+        game_time=game_time,
+        international=international,
+    )
+    price = float(section_base) * multiplier * _demo_row_multiplier("12")
     return max(35, round(price / 5) * 5)
+
+
+def _demo_listing_type(area, seat_position):
+    if area == "Club / Premium":
+        return "Club listing"
+    if seat_position == "Sideline":
+        return "Sideline listing"
+    if seat_position == "Corner":
+        return "Corner listing"
+    return "End zone listing"
 
 
 def ensure_nfl_demo_inventory(db_path, schedule_games):
     """
-    Seed synthetic seat inventory for upcoming games for every NFL club.
+    Seed realistic-looking synthetic seat inventory for upcoming games across all NFL clubs.
 
-    Each scheduled matchup is represented from both teams' perspectives so a
-    user can browse any NFL team, including road games. These are intentionally
-    labeled demo inventory and are not live Ticketmaster availability.
+    These rows are explicitly demo inventory. Section names are synthetic labels,
+    prices are deterministic examples, and no row represents live availability.
     """
     if not schedule_games:
         return 0
@@ -1139,79 +1203,69 @@ def ensure_nfl_demo_inventory(db_path, schedule_games):
             return 0
 
         columns = {row[1] for row in conn.execute("PRAGMA table_info(ticket_inventory)").fetchall()}
-        if "team" not in columns:
-            conn.execute("ALTER TABLE ticket_inventory ADD COLUMN team TEXT")
-            columns.add("team")
-
-        # Migrate legacy rows without assuming a particular NFL club.
-        legacy_rows = conn.execute(
-            "SELECT id, week, opponent, game_date FROM ticket_inventory WHERE team IS NULL OR TRIM(team)=''"
-        ).fetchall()
-        for row_id, legacy_week, legacy_opponent, legacy_date in legacy_rows:
-            candidate_teams = []
-            week_key = _demo_normalize_week(legacy_week)
-            opponent_key = _nfl_full_team_name(legacy_opponent)
-            date_key = str(legacy_date or "")[:10]
-            for schedule_row in schedule_games:
-                if _demo_normalize_week(schedule_row.get("week")) != week_key:
-                    continue
-                for candidate in (schedule_row.get("team"), schedule_row.get("away_team"), schedule_row.get("home_team")):
-                    candidate = _nfl_full_team_name(candidate)
-                    if candidate not in NFL_TEAM_NAMES:
-                        continue
-                    if _nfl_full_team_name(schedule_row.get("opponent")) == opponent_key or _nfl_full_team_name(schedule_row.get("home_team")) == opponent_key or _nfl_full_team_name(schedule_row.get("away_team")) == opponent_key:
-                        if candidate not in candidate_teams:
-                            candidate_teams.append(candidate)
-            if date_key:
-                dated = [c for c in schedule_games if str(c.get("game_date") or "")[:10] == date_key and _nfl_full_team_name(c.get("opponent")) == opponent_key]
-                dated_teams = []
-                for c in dated:
-                    for candidate in (c.get("team"), c.get("home_team"), c.get("away_team")):
-                        candidate = _nfl_full_team_name(candidate)
-                        if candidate in NFL_TEAM_NAMES and candidate not in dated_teams:
-                            dated_teams.append(candidate)
-                if dated_teams:
-                    candidate_teams = dated_teams
-            if candidate_teams:
-                conn.execute("UPDATE ticket_inventory SET team=? WHERE id=?", (candidate_teams[0], row_id))
+        migrations = {
+            "team": "TEXT",
+            "seat_area": "TEXT",
+            "seat_position": "TEXT",
+            "seat_quality": "REAL",
+            "listing_type": "TEXT",
+            "venue": "TEXT",
+            "demo_version": "TEXT",
+        }
+        for column_name, column_type in migrations.items():
+            if column_name not in columns:
+                conn.execute(f"ALTER TABLE ticket_inventory ADD COLUMN {column_name} {column_type}")
+                columns.add(column_name)
 
         required = {"id", "week", "opponent", "game_date", "section", "row", "price", "quantity"}
         if not required.issubset(columns):
             return 0
 
+        # Backfill legacy rows with neutral metadata rather than deleting the user's data.
+        if "seat_area" in columns:
+            conn.execute(
+                "UPDATE ticket_inventory SET seat_area='Lower Bowl' WHERE (seat_area IS NULL OR TRIM(seat_area)='') AND CAST(section AS TEXT) GLOB '1*'"
+            )
+            conn.execute(
+                "UPDATE ticket_inventory SET seat_area='Upper Bowl' WHERE (seat_area IS NULL OR TRIM(seat_area)='') AND CAST(section AS TEXT) GLOB '2*'"
+            )
+            conn.execute(
+                "UPDATE ticket_inventory SET seat_area='Upper Bowl' WHERE (seat_area IS NULL OR TRIM(seat_area)='') AND CAST(section AS TEXT) GLOB '3*'"
+            )
+
         existing_rows = conn.execute(
             "SELECT team, week, opponent, section, row FROM ticket_inventory"
         ).fetchall()
-        existing_keys = set()
-        for team, week, opponent, section, row in existing_rows:
-            existing_keys.add((
+        existing_keys = {
+            (
                 _nfl_full_team_name(team) if team else "",
                 _demo_normalize_week(week),
                 str(opponent or "").strip().lower(),
-                str(section or "").strip(),
-                str(row or "").strip(),
-            ))
+                str(section or "").strip().lower(),
+                str(row or "").strip().lower(),
+            )
+            for team, week, opponent, section, row in existing_rows
+        }
 
-        next_id = int(
-            conn.execute("SELECT COALESCE(MAX(id), 0) FROM ticket_inventory").fetchone()[0] or 0
-        ) + 1
+        next_id = int(conn.execute("SELECT COALESCE(MAX(id), 0) FROM ticket_inventory").fetchone()[0] or 0) + 1
         has_source = "source" in columns
         has_last_updated = "last_updated" in columns
         has_event_id = "event_id" in columns
+        now = datetime.now().isoformat()
         today = datetime.now().date()
 
-        # Collapse the team-centric schedule back to one physical matchup.
         physical_games = {}
         for game in schedule_games:
             if not isinstance(game, dict):
                 continue
-            game_id = str(game.get("game_id") or "").strip()
-            if not game_id:
-                game_id = (
-                    f"2026_{game.get('week')}_"
-                    f"{game.get('away_team')}_{game.get('home_team')}"
-                )
-            physical_games[game_id] = game
+            game_id = str(game.get("game_id") or "").strip() or f"2026_{game.get('week')}_{game.get('away_team')}_{game.get('home_team')}"
+            # Prefer a physical-game key so home/away schedule perspectives don't double-seed the same matchup.
+            physical_key = (
+                game_id,
+                _nfl_full_team_name(game.get("home_team")),
+                _nfl_full_team_name(game.get("away_team")),
+            )
+            physical_games[physical_key] = game
 
         for base_game in physical_games.values():
             game_date = str(base_game.get("game_date") or "").strip()
@@ -1222,50 +1276,61 @@ def ensure_nfl_demo_inventory(db_path, schedule_games):
                 except ValueError:
                     pass
 
-            away = _nfl_full_team_name(base_game.get("away_team"))
             home = _nfl_full_team_name(base_game.get("home_team"))
-            if away not in NFL_TEAM_NAMES or home not in NFL_TEAM_NAMES:
+            away = _nfl_full_team_name(base_game.get("away_team"))
+            if home not in NFL_TEAM_NAMES or away not in NFL_TEAM_NAMES:
                 continue
 
             week = _demo_normalize_week(base_game.get("week"))
             venue = base_game.get("venue") or NFL_TEAM_VENUES.get(home, {}).get("venue", "NFL Venue")
+            game_time = base_game.get("game_time")
             international = bool(base_game.get("international_game"))
+            demand_multiplier = _demo_game_demand_multiplier(
+                home,
+                away,
+                week,
+                game_time=game_time,
+                international=international,
+            )
 
+            # Listings are shown from each team's browsing perspective, but physical tickets stay at the home venue.
             for viewing_team, opponent in ((home, away), (away, home)):
-                for section, area, base_price in NFL_DEMO_SECTION_BLUEPRINT:
+                for area, section, base_price, seat_position, base_quality in NFL_DEMO_SECTION_BLUEPRINT:
                     for row in NFL_DEMO_ROWS:
                         key = (
                             viewing_team,
                             week,
                             opponent.strip().lower(),
-                            section,
-                            row,
+                            section.strip().lower(),
+                            row.strip().lower(),
                         )
                         if key in existing_keys:
                             continue
 
-                        # Stable row variation keeps the inventory varied without randomness.
-                        row_multiplier = {"4": 1.16, "8": 1.00, "12": 0.92}[row]
-                        seed = zlib.crc32(
-                            f"{home}|{away}|{week}|{section}|{row}".encode("utf-8")
-                        ) % 21
-                        matchup_multiplier = 0.90 + (seed / 100.0)
-                        if international:
-                            matchup_multiplier += 0.06
-                        if NFL_TEAM_DIVISIONS.get(viewing_team) == NFL_TEAM_DIVISIONS.get(opponent):
-                            matchup_multiplier += 0.05
-
+                        row_multiplier = _demo_row_multiplier(row)
+                        jitter_seed = zlib.crc32(
+                            f"price|{home}|{away}|{week}|{section}|{row}".encode("utf-8")
+                        ) % 9
+                        listing_multiplier = 0.97 + (jitter_seed / 100.0)
                         price = max(
                             35,
-                            round((base_price * matchup_multiplier * row_multiplier) / 5) * 5,
+                            round((base_price * demand_multiplier * row_multiplier * listing_multiplier) / 5) * 5,
                         )
-                        quantity = {"4": 2, "8": 4, "12": 6}[row]
+
+                        quantity = _demo_quantity(home, away, week, section, row)
+                        row_quality_bonus = {"1": 0.5, "6": 0.2, "12": 0.0, "18": -0.3}.get(row, 0.0)
+                        quality = round(max(5.0, min(10.0, base_quality + row_quality_bonus)), 1)
+                        listing_type = _demo_listing_type(area, seat_position)
 
                         fields = [
-                            "id", "week", "opponent", "game_date", "section", "row", "price", "quantity", "team"
+                            "id", "week", "opponent", "game_date", "section", "row",
+                            "price", "quantity", "team", "seat_area", "seat_position",
+                            "seat_quality", "listing_type", "venue", "demo_version",
                         ]
                         values = [
-                            next_id, week, opponent, game_date or None, section, row, price, quantity, viewing_team
+                            next_id, week, opponent, game_date or None, section, row,
+                            price, quantity, viewing_team, area, seat_position,
+                            quality, listing_type, venue, "NFL-demo-v2",
                         ]
 
                         if has_event_id:
@@ -1273,10 +1338,10 @@ def ensure_nfl_demo_inventory(db_path, schedule_games):
                             values.append(f"DEMO-NFL-2026-{str(base_game.get('game_id'))[:48]}")
                         if has_source:
                             fields.append("source")
-                            values.append(f"KickSeatz Demo Inventory • {venue} baseline")
+                            values.append("KickSeatz Demo Inventory • Synthetic NFL marketplace")
                         if has_last_updated:
                             fields.append("last_updated")
-                            values.append(datetime.now().isoformat())
+                            values.append(now)
 
                         placeholders = ", ".join("?" for _ in fields)
                         conn.execute(
@@ -1662,6 +1727,28 @@ def ensure_inventory_team_column(db_path):
     finally:
         conn.close()
 
+def _demo_infer_seat_area(section):
+    """Infer a broad seating tier from synthetic or legacy section labels."""
+    text = str(section or "").strip().lower()
+    if "club" in text or "premium" in text:
+        return "Club / Premium"
+    if "lower" in text:
+        return "Lower Bowl"
+    if "upper" in text:
+        return "Upper Bowl"
+    digits = re.sub(r"[^0-9]", "", text)
+    if digits:
+        try:
+            number = int(digits)
+            if 101 <= number <= 199:
+                return "Lower Bowl"
+            if number >= 200:
+                return "Upper Bowl"
+        except ValueError:
+            pass
+    return "Other"
+
+
 def load_inventory(path):
 
     if not os.path.isfile(path):
@@ -1729,6 +1816,19 @@ def load_inventory(path):
         else:
             optional_selects.append("NULL AS last_updated")
 
+        for optional_column in (
+            "seat_area",
+            "seat_position",
+            "seat_quality",
+            "listing_type",
+            "venue",
+            "demo_version",
+        ):
+            if optional_column in column_names:
+                optional_selects.append(optional_column)
+            else:
+                optional_selects.append(f"NULL AS {optional_column}")
+
         rows = conn.execute(
             """
             SELECT
@@ -1774,6 +1874,12 @@ def load_inventory(path):
                     "team": r[8] or "Unknown",
                     "source": r[9],
                     "last_updated": r[10],
+                    "seat_area": r[11] or _demo_infer_seat_area(r[4]),
+                    "seat_position": r[12] or "",
+                    "seat_quality": float(r[13]) if r[13] is not None else None,
+                    "listing_type": r[14] or "Demo listing",
+                    "venue": r[15] or "",
+                    "demo_version": r[16] or "",
                 }
             )
         except (TypeError, ValueError) as e:
@@ -2058,44 +2164,45 @@ def calculate_game_score(game):
     )
 
 def calculate_seat_quality(ticket):
+    """Return a 0-10 seat quality score using demo metadata when available."""
+    stored_quality = ticket.get("seat_quality")
+    if stored_quality is not None:
+        try:
+            return round(max(0.0, min(10.0, float(stored_quality))), 1)
+        except (TypeError, ValueError):
+            pass
 
     section = str(ticket.get("section", ""))
     row = str(ticket.get("row", ""))
+    text = f"{section} {ticket.get('seat_area', '')}".lower()
 
-    score = 5
+    if "club" in text or "premium" in text:
+        score = 9.0
+    elif "lower" in text:
+        score = 8.0
+    elif "upper" in text:
+        score = 6.2
+    else:
+        score = 5.0
 
-    try:
-        section_number = int(
-            "".join(
-                c for c in section
-                if c.isdigit()
-            )
-        )
-
+    section_number = get_section_number(section)
+    if section_number is not None:
         if 101 <= section_number <= 134:
-            score += 3
+            score = max(score, 8.0)
+        elif section_number >= 300:
+            score = max(score, 6.2)
 
-    except ValueError:
-        pass
+    match = re.search(r"\d+", row)
+    if match:
+        row_number = int(match.group())
+        if row_number <= 3:
+            score += 1.0
+        elif row_number <= 8:
+            score += 0.5
+        elif row_number >= 16:
+            score -= 0.3
 
-    try:
-        row_number = int(
-            "".join(
-                c for c in row
-                if c.isdigit()
-            )
-        )
-
-        if row_number <= 5:
-            score += 2
-
-        elif row_number <= 10:
-            score += 1
-
-    except ValueError:
-        pass
-
-    return min(score, 10)
+    return round(max(0.0, min(10.0, score)), 1)
 
 
 def calculate_price_score(price, comparable_prices):
@@ -2849,8 +2956,7 @@ def rate_ticket(
         [
             float(t.get("price", 0))
             for t in inventory
-            if normalize_week(t.get("week"))
-            == normalize_week(ticket.get("week"))
+            if _same_inventory_game(t, ticket)
             and int(t.get("available_quantity", 0)) > 0
         ]
     )
@@ -3029,7 +3135,7 @@ def get_price_benchmark(ticket):
     comparable = [
         float(t.get("price", 0))
         for t in inventory
-        if normalize_week(t.get("week")) == normalize_week(ticket.get("week"))
+        if _same_inventory_game(t, ticket)
         and int(t.get("available_quantity", 0)) > 0
     ]
     if not comparable:
@@ -3188,21 +3294,8 @@ def get_section_number(section):
 
 
 def get_seat_area(section):
-    section_number = get_section_number(section)
-
-    if section_number is None:
-        return "Other"
-
-    if 101 <= section_number <= 134:
-        return "Lower Bowl"
-
-    if 201 <= section_number <= 299:
-        return "Upper Bowl"
-
-    if section_number >= 300:
-        return "Upper Bowl"
-
-    return "Other"
+    """Classify a ticket into a broad seating tier for filtering/scoring."""
+    return _demo_infer_seat_area(section)
 
 
 def normalize_weights(values):
@@ -4442,23 +4535,50 @@ def calculate_profile_ticket_match(ticket, game, preferences):
     favorite_team = preferences.get("favorite_team")
     favorite_opponents = set(preferences.get("favorite_opponents") or [])
 
-    if favorite_team and game.get("team") == favorite_team:
-        score += 12
-    if game.get("opponent") in favorite_opponents:
+    game_team = _nfl_full_team_name(game.get("team"))
+    game_opponent = _nfl_full_team_name(game.get("opponent"))
+    if favorite_team and favorite_team in {game_team, game_opponent}:
+        score += 14
+    if game_opponent in favorite_opponents or game_team in favorite_opponents:
         score += 8
 
     saved_area = str(preferences.get("seat_area") or "No preference")
+    ticket_area = get_seat_area(ticket.get("section"))
     if saved_area != "No preference":
-        ticket_area = get_seat_area(ticket.get("section"))
         if saved_area == ticket_area:
             score += 18
         elif saved_area == "Club / Premium" and ticket_area == "Lower Bowl":
-            score += 6
+            score += 5
+
+    saved_budget = float(preferences.get("typical_budget") or 0)
+    ticket_price = float(ticket.get("price") or 0)
+    if saved_budget > 0 and ticket_price > 0:
+        ratio = ticket_price / saved_budget
+        if ratio <= 0.75:
+            score += 10
+        elif ratio <= 1.0:
+            score += 7
+        elif ratio <= 1.15:
+            score -= 5
+        else:
+            score -= 12
 
     saved_home_away = str(preferences.get("home_away") or "Either")
-    if saved_home_away == "Prefer home" and game.get("home_game"):
+    if saved_home_away in {"Prefer home", "Prefer away"}:
+        is_home = bool(game.get("home_game"))
+        if saved_home_away == "Prefer home" and is_home:
+            score += 7
+        elif saved_home_away == "Prefer away" and not is_home and not game.get("neutral_site"):
+            score += 7
+
+    experience = str(preferences.get("experience") or "No strong preference")
+    if experience == "Home-field / team atmosphere" and game.get("home_game"):
+        score += 5
+    elif experience == "Rivalry / intense atmosphere" and is_division_rival(game):
+        score += 5
+    elif experience == "Premium / special experience" and ticket_area == "Club / Premium":
         score += 6
-    elif saved_home_away == "Prefer away" and not game.get("home_game") and not game.get("neutral_site"):
+    elif experience == "Affordable / value-focused" and saved_budget > 0 and ticket_price <= saved_budget * 0.70:
         score += 6
 
     return round(max(0, min(100, score)))
@@ -4695,22 +4815,57 @@ def render_platform_home():
                 )
 
     st.markdown('<div class="market-section-label">NFL team directory</div>', unsafe_allow_html=True)
-    team_choice = st.selectbox("Explore a team", NFL_TEAM_NAMES, index=(NFL_TEAM_NAMES.index(favorite_team) if favorite_team in NFL_TEAM_NAMES else 0), key="kz_home_team_explorer")
-    team_info = get_team_venue_info(team_choice) or {}
-    explorer_games = get_upcoming_nfl_games(team_choice, limit=3)
+    st.caption("Choose any NFL team. The directory is selection-based so you can open a team without getting trapped on a card view.")
+    directory_cols = st.columns([2.4, 1])
+    with directory_cols[0]:
+        team_choice = st.selectbox(
+            "Explore a team",
+            NFL_TEAM_NAMES,
+            index=(NFL_TEAM_NAMES.index(favorite_team) if favorite_team in NFL_TEAM_NAMES else 0),
+            key="kz_home_team_explorer",
+            label_visibility="collapsed",
+        )
+    with directory_cols[1]:
+        st.button(
+            "View Team",
+            key="kz_home_view_team",
+            use_container_width=True,
+            on_click=lambda: st.session_state.__setitem__("kz_selected_directory_team", team_choice),
+        )
+
+    selected_directory_team = st.session_state.get("kz_selected_directory_team") or team_choice
+    team_info = get_team_venue_info(selected_directory_team) or {}
+    explorer_games = get_upcoming_nfl_games(selected_directory_team, limit=3)
     with st.container(border=True):
-        left, right = st.columns([1.3, 2])
+        left, right = st.columns([1.2, 2])
         with left:
-            logo = get_nfl_logo_url(team_choice)
+            logo = get_nfl_logo_url(selected_directory_team)
             if logo:
-                st.markdown(f'<img src="{logo}" width="76" height="76" loading="lazy" decoding="async" alt="{team_choice} logo">', unsafe_allow_html=True)
-            st.markdown(f"### {team_choice}")
-            st.caption(f"{NFL_TEAM_DIVISIONS.get(team_choice, 'NFL')} • {team_info.get('venue', 'Venue TBD')}")
+                st.markdown(f'<img src="{logo}" width="64" height="64" loading="lazy" decoding="async" alt="{selected_directory_team} logo">', unsafe_allow_html=True)
+            st.markdown(f"### {selected_directory_team}")
+            st.caption(f"{NFL_TEAM_DIVISIONS.get(selected_directory_team, 'NFL')} • {team_info.get('venue', 'Venue TBD')}")
             st.caption(team_info.get('location', 'Location TBD'))
+            st.button(
+                "Find Tickets",
+                key=f"kz_directory_find_tickets_{selected_directory_team}",
+                use_container_width=True,
+                on_click=_kz_navigate,
+                args=("find_tickets",),
+            )
         with right:
             st.write("**Next games**")
-            for game in explorer_games:
-                st.write(f"• {_format_nfl_matchup(game)} — {game.get('game_date') or 'Date TBD'}")
+            if not explorer_games:
+                st.caption("No upcoming games are currently available from the schedule feed.")
+            for game_index, game in enumerate(explorer_games):
+                game_id = game.get("game_id") or f"{selected_directory_team}-{game_index}"
+                st.write(f"**{_format_nfl_matchup(game)}** — {game.get('game_date') or 'Date TBD'}")
+                st.button(
+                    "Find tickets for this game",
+                    key=f"kz_directory_game_{selected_directory_team}_{game_id}",
+                    use_container_width=True,
+                    on_click=_open_nfl_ticket_search,
+                    args=(game,),
+                )
     st.caption("32 NFL teams • league-wide schedule discovery • synthetic demo ticket availability • Ticketmaster Discovery metadata when available")
 
 def render_platform_find_game():
@@ -4872,9 +5027,11 @@ def render_platform_find_tickets():
         with st.container(border=True):
             l,m,r = st.columns([3,1,1])
             with l:
+                area = t.get("seat_area") or get_seat_area(t.get("section"))
+                position = t.get("seat_position") or "Seat location"
                 st.markdown(f"### #{rank} • ${float(t.get('price',0)):.0f}/ticket")
-                st.write(f"Section **{t.get('section')}** • Row **{t.get('row')}**")
-                st.caption(f"{int(t.get('available_quantity',0))} ticket(s) available • {t.get('source') or 'KickSeatz inventory'}")
+                st.write(f"**{area}** • {position} • Section **{t.get('section')}** • Row **{t.get('row')}**")
+                st.caption(f"{int(t.get('available_quantity',0))} ticket(s) available • {t.get('listing_type') or 'Demo listing'} • {t.get('source') or 'KickSeatz inventory'}")
             with m:
                 st.metric("KickSeatz Score", f"{item['score']}/100")
                 if saved:
@@ -4892,7 +5049,9 @@ def render_platform_find_tickets():
         detail_left, detail_right = st.columns([2.4, 1])
         with detail_left:
             st.markdown(f"**{_format_nfl_matchup(selected_game)}**")
-            st.write(f"Section **{selected_ticket.get('section')}** • Row **{selected_ticket.get('row')}** • ${float(selected_ticket.get('price', 0)):.0f}/ticket")
+            selected_area = selected_ticket.get("seat_area") or get_seat_area(selected_ticket.get("section"))
+            selected_position = selected_ticket.get("seat_position") or "Seat location"
+            st.write(f"**{selected_area}** • {selected_position} • Section **{selected_ticket.get('section')}** • Row **{selected_ticket.get('row')}** • ${float(selected_ticket.get('price', 0)):.0f}/ticket")
             st.caption("Synthetic demo listing • not live availability")
         with detail_right:
             ticket_score = calculate_ticket_score(selected_ticket, selected_game, budget, ticket_count, priority)
