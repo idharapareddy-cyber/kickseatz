@@ -562,6 +562,43 @@ MBS_BASELINE_SECTIONS = [
 
 MBS_DEMO_ROWS = ["4", "8", "12", "18"]
 
+# Explicit display order for the complete Mercedes-Benz Stadium home slate.
+# Keeping this list separate prevents older schedule JSON from shrinking the
+# UI back to a partial four-game schedule.
+MBS_HOME_GAME_WEEKS = (2, 5, 6, 7, 10, 13, 16, 17)
+
+
+def get_mbs_home_games_for_display(dataset=None):
+    """Return all 8 current MBS home games in a deterministic order."""
+    source_games = dataset if isinstance(dataset, list) else (
+        dataset.get("games", [])
+        if isinstance(dataset, dict)
+        else []
+    )
+
+    by_key = {}
+    for game in source_games:
+        if not isinstance(game, dict):
+            continue
+        match = re.search(r"\d+", str(game.get("week", "")))
+        if not match:
+            continue
+        opponent = str(game.get("opponent", "")).strip().lower()
+        by_key[(int(match.group()), opponent)] = dict(game)
+
+    result = []
+    for baseline in MBS_HOME_GAME_BASELINE:
+        week = int(baseline["week"])
+        opponent = str(baseline["opponent"]).strip()
+        game = by_key.get((week, opponent.lower()), {})
+        game.update(baseline)
+        game.setdefault("home_game", True)
+        game.setdefault("venue", "Mercedes-Benz Stadium")
+        result.append(game)
+
+    result.sort(key=lambda g: MBS_HOME_GAME_WEEKS.index(int(g.get("week"))))
+    return result
+
 
 def _demo_price_multiplier(week):
     """Small matchup-based demo adjustment; not a market-price claim."""
@@ -2478,54 +2515,55 @@ def get_deal_assessment(
 
 def get_game_selector_options():
     """
-    Build the game selector from the ticket inventory database first.
+    Return the complete current Mercedes-Benz Stadium home-game baseline.
 
-    The database is the source of truth for which games currently have
-    ticket inventory. This prevents an older JSON schedule from limiting
-    the selector to the original four games.
+    The selector is intentionally anchored to MBS_HOME_GAME_BASELINE so an
+    older local JSON file or a partially populated database cannot reduce
+    the UI back to the original four games. Ticketmaster-enriched metadata
+    is merged in when available.
     """
-    game_map = {}
+    dataset_games = {}
 
-    for ticket in inventory:
-        week = normalize_week(ticket.get("week"))
-        opponent = str(
-            ticket.get("opponent", "Unknown opponent")
-        ).strip()
+    games = (
+        master_dataset.get("games", [])
+        if isinstance(master_dataset, dict)
+        else []
+    )
 
-        if week is None:
+    for game in games:
+        if not isinstance(game, dict):
             continue
+        week = normalize_week(game.get("week"))
+        opponent = str(game.get("opponent", "")).strip()
+        if week is not None:
+            dataset_games[(week, opponent.lower())] = game
 
-        if week not in game_map:
-            game_map[week] = {
-                "week": week,
-                "opponent": opponent,
-                "game_date": ticket.get("game_date"),
-                "home_game": True,
-                "venue": "Mercedes-Benz Stadium",
-            }
+    selected_games = []
 
-    valid_games = list(game_map.values())
-    valid_games.sort(
+    for baseline_game in MBS_HOME_GAME_BASELINE:
+        game = dict(baseline_game)
+        key = (
+            normalize_week(baseline_game.get("week")),
+            str(baseline_game.get("opponent", "")).strip().lower(),
+        )
+
+        enriched = dataset_games.get(key)
+        if enriched:
+            # Keep the verified baseline fields authoritative while carrying
+            # Ticketmaster event metadata (event ID, links, status, etc.).
+            merged = dict(enriched)
+            merged.update(game)
+            game = merged
+
+        game.setdefault("home_game", True)
+        game.setdefault("venue", "Mercedes-Benz Stadium")
+        selected_games.append(game)
+
+    selected_games.sort(
         key=lambda game: normalize_week(game.get("week")) or 999
     )
 
-    # Fall back to the complete in-memory schedule if no inventory rows
-    # are available, preserving the app's normal behavior.
-    if not valid_games:
-        games = (
-            master_dataset.get("games", [])
-            if isinstance(master_dataset, dict)
-            else []
-        )
-        valid_games = [
-            game for game in games
-            if isinstance(game, dict)
-        ]
-        valid_games.sort(
-            key=lambda game: normalize_week(game.get("week")) or 999
-        )
-
-    return valid_games
+    return selected_games
 
 
 def get_price_benchmark(ticket):
@@ -3093,20 +3131,25 @@ st.markdown("""
 # HOME GAME VISUALS
 # ============================================================
 
-home_visual_games = [
-    game for game in get_game_selector_options()
-    if game.get("home_game", True)
-    and str(game.get("venue", "Mercedes-Benz Stadium")) == "Mercedes-Benz Stadium"
-]
+home_visual_games = get_mbs_home_games_for_display(master_dataset)
 
 if home_visual_games:
     st.markdown(
-        '<h2 class="section-title">🏟️ 2026 Home Matchups</h2>',
+        '<h2 class="section-title">🏟️ 2026 Mercedes-Benz Stadium Home Games</h2>',
         unsafe_allow_html=True,
     )
     st.caption(
-        "Real Falcons home schedule • Mercedes-Benz Stadium seating baseline • "
-        "prices and availability remain demo data until live Ticketmaster access is enabled."
+        f"{len(home_visual_games)} regular-season home games at Mercedes-Benz Stadium. "
+        "Seat locations are based on the stadium layout; demo prices and availability "
+        "are used until live Ticketmaster seat inventory is authorized."
+    )
+
+    st.info(
+        "Home-game baseline loaded: "
+        + " • ".join(
+            f"Wk {game.get('week')} {game.get('opponent')}"
+            for game in home_visual_games
+        )
     )
 
     for start in range(0, len(home_visual_games), 2):
@@ -3118,15 +3161,6 @@ if home_visual_games:
                     render_home_matchup_card(matchup),
                     unsafe_allow_html=True,
                 )
-
-    st.markdown(
-        '<h2 class="section-title">🗺️ Mercedes-Benz Stadium Baseline</h2>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        render_mbs_baseline_visual(),
-        unsafe_allow_html=True,
-    )
 
 # ============================================================
 # SIDEBAR
@@ -3215,8 +3249,8 @@ if priority == "Custom Mix":
         "Weights are automatically normalized to 100%."
     )
 
-selector_games = get_game_selector_options()
-game_selector_labels = ["All 2026 Games"] + [
+selector_games = get_mbs_home_games_for_display(master_dataset)
+game_selector_labels = ["All MBS Home Games"] + [
     f"Week {g.get('week')} • Falcons vs {g.get('opponent')} • {g.get('game_date', 'Date N/A')}"
     for g in selector_games
 ]
@@ -3228,7 +3262,7 @@ selected_game_label = st.sidebar.selectbox(
 )
 
 selected_week = None
-if selected_game_label != "All 2026 Games":
+if selected_game_label != "All MBS Home Games":
     selected_index = game_selector_labels.index(selected_game_label) - 1
     selected_week = selector_games[selected_index].get("week")
 
