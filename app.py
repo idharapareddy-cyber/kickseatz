@@ -4321,7 +4321,7 @@ def render_platform_home():
         (c4, "🏟️", "Explore NFL", "Browse the NFL schedule and see venue details when you open a ticket.", "find_tickets"),
     ]
 
-    for column, icon, title, description, target in cards:
+    for card_index, (column, icon, title, description, target) in enumerate(cards, start=1):
         with column:
             st.markdown(
                 f'<div class="market-card"><h3>{icon} {title}</h3><p>{description}</p></div>',
@@ -4329,7 +4329,7 @@ def render_platform_home():
             )
             st.button(
                 title,
-                key=f"home_{target}",
+                key=f"home_card_{card_index}_{target}",
                 use_container_width=True,
                 on_click=_kz_navigate,
                 args=(target,),
