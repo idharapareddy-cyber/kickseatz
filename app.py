@@ -439,7 +439,7 @@ st.set_page_config(
     page_title="KickSeatz",
     page_icon="🏟️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ============================================================
@@ -1422,52 +1422,201 @@ def _visual_game_date(value):
 
 st.markdown("""
 <style>
-
-.hero {
-    padding: 30px 34px;
-    border-radius: 20px;
-    background: linear-gradient(135deg, #2563eb 0%, #111111 100%);
-    color: white;
-    margin-bottom: 24px;
-    box-shadow: 0 8px 28px rgba(0,0,0,.12);
+:root {
+    --kz-ink: #0f172a;
+    --kz-muted: #64748b;
+    --kz-border: #e2e8f0;
+    --kz-surface: #ffffff;
+    --kz-surface-soft: #f8fafc;
+    --kz-accent: #2563eb;
+    --kz-accent-dark: #1d4ed8;
+    --kz-accent-soft: #eff6ff;
+    --kz-shadow: 0 8px 28px rgba(15, 23, 42, .07);
+    --kz-radius: 18px;
 }
 
-.hero h1 {
+/* ---------- App shell ---------- */
+.stApp {
+    background: #f6f8fb;
+    color: var(--kz-ink);
+}
+
+.block-container {
+    max-width: 1220px;
+    padding-top: 1rem;
+    padding-bottom: 3rem;
+}
+
+[data-testid="stSidebar"] {
+    background: #ffffff;
+    border-right: 1px solid var(--kz-border);
+}
+
+[data-testid="stHeader"] {
+    background: transparent;
+}
+
+/* ---------- Typography ---------- */
+h1, h2, h3, h4 {
+    color: var(--kz-ink);
+    letter-spacing: -.02em;
+}
+
+h2 {
+    margin-top: .8rem;
+    margin-bottom: .35rem;
+}
+
+p, label, [data-testid="stMarkdownContainer"] {
+    color: var(--kz-ink);
+}
+
+.small-muted,
+.kz-muted {
+    color: var(--kz-muted) !important;
+}
+
+/* ---------- Brand / navigation ---------- */
+.kz-nav {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 6px 2px 14px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--kz-border);
+}
+
+.kz-brand {
+    font-size: 27px;
+    line-height: 1;
+    font-weight: 900;
+    letter-spacing: -.045em;
+    color: var(--kz-ink) !important;
+}
+
+.kz-brand-accent {
+    color: var(--kz-accent) !important;
+}
+
+.kz-subbrand {
+    font-size: 12px;
+    color: var(--kz-muted);
+    margin-top: 6px;
+}
+
+/* Keep nav buttons compact and consistent */
+.kz-nav + div [data-testid="stHorizontalBlock"] {
+    gap: 8px;
+    margin-bottom: 18px;
+}
+
+/* ---------- Main hero ---------- */
+.market-hero {
+    padding: 38px 40px;
+    border-radius: 24px;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 65%, #2563eb 100%);
+    color: #ffffff;
+    box-shadow: 0 16px 36px rgba(15, 23, 42, .14);
+    margin: 8px 0 28px;
+    overflow: hidden;
+}
+
+.market-hero h1 {
+    color: #ffffff;
     font-size: 46px;
-    margin: 0 0 4px 0;
+    line-height: 1.05;
+    margin: 0 0 10px;
+    font-weight: 900;
+}
+
+.market-hero p {
+    color: #dbeafe;
+    margin: 0;
+    max-width: 760px;
+    font-size: 17px;
+    line-height: 1.55;
+}
+
+.market-section-label {
+    margin: 26px 0 10px;
+    color: var(--kz-muted);
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+}
+
+/* ---------- Cards ---------- */
+.market-card,
+.market-ticket-card,
+.matchup-card,
+.feature-card,
+.seat-map-card,
+.watch-card {
+    border: 1px solid var(--kz-border);
+    border-radius: var(--kz-radius);
+    background: var(--kz-surface);
+    box-shadow: var(--kz-shadow);
+}
+
+.market-card {
+    min-height: 150px;
+    padding: 20px 21px;
+    margin-bottom: 9px;
+    transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+
+.market-card:hover {
+    transform: translateY(-1px);
+    border-color: #cbd5e1;
+    box-shadow: 0 12px 30px rgba(15, 23, 42, .09);
+}
+
+.market-card h3 {
+    margin: 0 0 8px;
+    font-size: 20px;
     font-weight: 850;
 }
 
-.hero p {
-    margin: 5px 0;
+.market-card p {
+    color: var(--kz-muted);
+    margin: 0;
+    line-height: 1.5;
+}
+
+.market-ticket-card {
+    padding: 18px;
+    margin-bottom: 12px;
+}
+
+.market-price {
+    color: var(--kz-ink) !important;
+    font-size: 30px;
+    font-weight: 900;
+    letter-spacing: -.03em;
+}
+
+.market-score {
+    color: var(--kz-accent) !important;
     font-size: 18px;
+    font-weight: 900;
 }
 
-.hero .tagline {
-    color: #f1f5f9;
-    font-size: 15px;
-}
-
-.mobile-note {
-    font-size: 0.85rem;
-}
-
+/* ---------- Matchup cards ---------- */
 .matchup-card {
-    border: 1px solid rgba(100,116,139,.20);
-    border-radius: 20px;
     padding: 18px 18px 16px;
-    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-    box-shadow: 0 8px 24px rgba(15,23,42,.07);
-    margin: 6px 0 14px;
+    margin: 4px 0 12px;
+    background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
 }
 
 .matchup-topline {
     display: flex;
     justify-content: space-between;
     gap: 10px;
-    color: #64748b;
+    color: var(--kz-muted);
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 850;
     letter-spacing: .08em;
 }
 
@@ -1484,45 +1633,47 @@ st.markdown("""
     min-width: 0;
 }
 
+.matchup-logo,
+.logo-fallback {
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 7px;
+}
+
 .matchup-logo {
     display: block;
-    width: 72px;
-    height: 72px;
     object-fit: contain;
-    margin: 0 auto 7px;
 }
 
 .logo-fallback {
-    width: 72px;
-    height: 72px;
-    margin: 0 auto 7px;
     border-radius: 50%;
     display: grid;
     place-items: center;
-    background: #111827;
-    color: white;
+    background: #e2e8f0;
+    color: var(--kz-ink);
     font-weight: 900;
-    font-size: 13px;
+    font-size: 12px;
 }
 
 .matchup-team-name {
+    color: var(--kz-ink);
     font-weight: 850;
     font-size: 14px;
     line-height: 1.2;
 }
 
 .matchup-vs {
+    color: var(--kz-accent);
     font-size: 12px;
     font-weight: 900;
-    color: #2563eb;
     letter-spacing: .08em;
 }
 
 .matchup-status {
     margin-top: 10px;
     padding-top: 10px;
-    border-top: 1px solid rgba(100,116,139,.14);
-    color: #64748b;
+    border-top: 1px solid #edf2f7;
+    color: var(--kz-muted);
     font-size: 12px;
     font-weight: 650;
 }
@@ -1546,24 +1697,90 @@ st.markdown("""
 }
 
 .recommendation-matchup img {
-    display: block;
-    width: 56px;
-    height: 56px;
+    width: 52px;
+    height: 52px;
     object-fit: contain;
 }
 
+/* ---------- Controls ---------- */
+[data-testid="stButton"] button,
+[data-testid="stLinkButton"] a {
+    border-radius: 11px;
+    font-weight: 750;
+    min-height: 42px;
+    border: 1px solid var(--kz-border);
+    box-shadow: none;
+}
+
+[data-testid="stButton"] button[kind="primary"] {
+    background: var(--kz-accent);
+    border-color: var(--kz-accent);
+    color: #ffffff;
+}
+
+[data-testid="stButton"] button[kind="primary"]:hover {
+    background: var(--kz-accent-dark);
+    border-color: var(--kz-accent-dark);
+}
+
+[data-testid="stButton"] button[kind="secondary"] {
+    background: #ffffff;
+    color: var(--kz-ink);
+}
+
+[data-testid="stButton"] button[kind="secondary"]:hover {
+    border-color: #93c5fd;
+    color: var(--kz-accent-dark);
+    background: var(--kz-accent-soft);
+}
+
+[data-baseweb="select"] > div,
+[data-baseweb="input"] > div,
+textarea,
+input {
+    border-radius: 11px !important;
+}
+
+/* ---------- Metrics / info surfaces ---------- */
+[data-testid="stMetric"] {
+    background: #ffffff;
+    border: 1px solid var(--kz-border);
+    border-radius: 14px;
+    padding: 12px 14px;
+}
+
+[data-testid="stMetricLabel"] {
+    color: var(--kz-muted) !important;
+}
+
+[data-testid="stMetricValue"] {
+    color: var(--kz-ink) !important;
+}
+
+[data-testid="stAlert"] {
+    border-radius: 13px;
+    border: 1px solid var(--kz-border);
+}
+
+[data-testid="stExpander"] {
+    border: 1px solid var(--kz-border);
+    border-radius: 14px;
+    background: #ffffff;
+}
+
+/* ---------- Specialty visuals ---------- */
 .mbs-visual {
-    border: 1px solid rgba(100,116,139,.20);
+    border: 1px solid #334155;
     border-radius: 20px;
     padding: 18px;
     background: linear-gradient(180deg, #111827 0%, #0f172a 100%);
     color: #f8fafc;
-    box-shadow: 0 8px 26px rgba(15,23,42,.10);
+    box-shadow: var(--kz-shadow);
 }
 
 .mbs-field {
     text-align: center;
-    border: 2px solid rgba(255,255,255,.55);
+    border: 2px solid rgba(255,255,255,.45);
     border-radius: 14px;
     padding: 13px 10px;
     margin-bottom: 12px;
@@ -1609,35 +1826,32 @@ st.markdown("""
     font-weight: 800;
 }
 
-.mbs-note {
-    padding-top: 10px;
-    color: #cbd5e1;
-    font-size: 11px;
-    text-align: center;
-}
-
-
-.feature-card {
-    border: 1px solid rgba(100,116,139,.22);
+.interactive-map-field {
+    margin: 10px 0 14px;
+    padding: 14px 18px;
     border-radius: 16px;
-    padding: 16px 18px;
-    margin: 8px 0;
-    background: rgba(255,255,255,.92);
+    background: linear-gradient(135deg, #111827, #1f2937);
+    color: #ffffff;
+    text-align: center;
+    font-weight: 900;
+    letter-spacing: .06em;
+    border: 1px solid rgba(255,255,255,.08);
 }
 
-.seat-map-card {
-    border: 1px solid rgba(100,116,139,.25);
-    border-radius: 18px;
-    padding: 14px;
-    background: #fafafa;
+.map-level-label {
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--kz-muted);
+    margin: 12px 0 6px;
 }
 
 .watch-card {
-    border: 1px solid rgba(167,25,48,.28);
-    border-radius: 16px;
+    border-color: #bfdbfe;
+    background: #f8fbff;
     padding: 16px 18px;
     margin: 8px 0;
-    background: rgba(167,25,48,.035);
 }
 
 .status-pill {
@@ -1645,60 +1859,47 @@ st.markdown("""
     padding: 5px 10px;
     border-radius: 999px;
     font-size: 12px;
-    font-weight: 700;
-    letter-spacing: .02em;
-    background: #f1f5f9;
+    font-weight: 750;
+    background: #eff6ff;
+    color: #1d4ed8;
 }
 
-.small-muted {
-    color: #64748b;
-    font-size: 13px;
-}
-
+/* ---------- Mobile ---------- */
 @media (max-width: 768px) {
-    .hero {
-        padding: 22px 20px;
-        border-radius: 16px;
+    .block-container {
+        padding-left: 1rem;
+        padding-right: 1rem;
     }
 
-    .hero h1 {
+    .kz-nav {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .market-hero {
+        padding: 27px 22px;
+        border-radius: 20px;
+    }
+
+    .market-hero h1 {
         font-size: 34px;
     }
 
-    .hero p {
+    .market-hero p {
         font-size: 15px;
     }
 
-    .section-title {
-        font-size: 20px;
+    .market-card {
+        min-height: auto;
     }
 
-    div[data-testid="stMetricValue"] {
-        font-size: 1.25rem;
+    .matchup-logo,
+    .logo-fallback {
+        width: 54px;
+        height: 54px;
     }
 }
-
-    .interactive-map-field {
-        margin: 10px 0 14px 0;
-        padding: 14px 18px;
-        border-radius: 16px;
-        background: linear-gradient(135deg, #111827, #1f2937);
-        color: white;
-        text-align: center;
-        font-weight: 900;
-        letter-spacing: .06em;
-        border: 1px solid rgba(255,255,255,.08);
-    }
-
-    .map-level-label {
-        font-size: 12px;
-        font-weight: 900;
-        letter-spacing: .08em;
-        text-transform: uppercase;
-        color: #64748b;
-        margin: 12px 0 6px 0;
-    }
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -4239,125 +4440,6 @@ def render_platform_profile():
 # KICKSEATZ PLATFORM NAVIGATION / MARKETPLACE SHELL
 # ============================================================
 
-st.markdown("""
-<style>
-
-/* Consumer-style top navigation */
-.kz-nav {
-    position: sticky;
-    top: 0;
-    z-index: 999;
-    padding: 8px 0 12px 0;
-    margin: -8px 0 18px 0;
-    background: rgba(248,250,252,.96);
-    backdrop-filter: blur(10px);
-    border-bottom: 1px solid rgba(148,163,184,.20);
-}
-
-.kz-brand {
-    font-size: 24px;
-    font-weight: 900;
-    letter-spacing: -.03em;
-    color: #0f172a !important;
-    margin: 0;
-}
-
-.kz-brand .kz-brand-accent {
-    color: #2563eb !important;
-}
-
-.kz-subbrand {
-    font-size: 12px;
-    color: #64748b;
-    margin: -2px 0 0 0;
-}
-
-.market-hero {
-    padding: 34px 36px;
-    border-radius: 24px;
-    background: linear-gradient(135deg, #2563eb 0%, #171717 100%);
-    color: white;
-    box-shadow: 0 12px 34px rgba(15,23,42,.15);
-    margin: 8px 0 24px 0;
-}
-
-.market-hero h1 {
-    font-size: 46px;
-    margin: 0 0 8px 0;
-    font-weight: 900;
-    letter-spacing: -.035em;
-}
-
-.market-hero p {
-    margin: 0;
-    font-size: 18px;
-}
-
-.market-card {
-    border: 1px solid rgba(148,163,184,.22);
-    border-radius: 20px;
-    padding: 22px;
-    background: white;
-    box-shadow: 0 7px 24px rgba(15,23,42,.07);
-    min-height: 160px;
-    margin-bottom: 14px;
-}
-
-.market-card h3 {
-    margin: 0 0 6px 0;
-    font-size: 22px;
-}
-
-.market-card p {
-    color: #64748b;
-    margin: 0;
-}
-
-.market-section-label {
-    font-size: 13px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: .08em;
-    color: #64748b;
-    margin: 6px 0 10px 0;
-}
-
-.market-ticket-card {
-    border: 1px solid rgba(148,163,184,.20);
-    border-radius: 18px;
-    padding: 18px;
-    background: white;
-    box-shadow: 0 5px 18px rgba(15,23,42,.06);
-    margin-bottom: 12px;
-}
-
-.market-ticket-card .market-price {
-    font-size: 30px;
-    font-weight: 900;
-    color: #111827;
-}
-
-.market-ticket-card .market-score {
-    font-size: 18px;
-    font-weight: 800;
-    color: #2563eb;
-}
-
-@media (max-width: 768px) {
-    .market-hero {
-        padding: 24px 20px;
-        border-radius: 18px;
-    }
-
-    .market-hero h1 {
-        font-size: 34px;
-    }
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-
 def _kz_navigate(page_name):
     st.session_state["kz_page"] = page_name
     st.rerun()
@@ -4368,7 +4450,7 @@ def render_platform_nav():
 
     st.markdown(
         '<div class="kz-nav">'
-        '<div class="kz-brand">🏟️ Kick<span class="kz-brand-accent">Seatz</span></div>'
+        '<div class="kz-brand">Kick<span class="kz-brand-accent">Seatz</span></div>'
         '<div class="kz-subbrand">NFL tickets, simplified</div>'
         '</div>',
         unsafe_allow_html=True,
