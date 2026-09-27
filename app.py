@@ -1722,6 +1722,27 @@ st.markdown("""
     }
 }
 
+    .interactive-map-field {
+        margin: 10px 0 14px 0;
+        padding: 14px 18px;
+        border-radius: 16px;
+        background: linear-gradient(135deg, #111827, #1f2937);
+        color: white;
+        text-align: center;
+        font-weight: 900;
+        letter-spacing: .06em;
+        border: 1px solid rgba(255,255,255,.08);
+    }
+
+    .map-level-label {
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        color: #64748b;
+        margin: 12px 0 6px 0;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -3735,6 +3756,114 @@ def get_schematic_seat_map_svg(ticket):
     """
 
 
+def render_interactive_mbs_map(ticket, game, ticket_count):
+    """Render a real in-app, clickable section explorer for Mercedes-Benz Stadium demo inventory."""
+    venue = str(game.get("venue", ""))
+    if venue != "Mercedes-Benz Stadium":
+        st.info(
+            f"🗺️ Interactive seating for {venue or 'this venue'} will activate when venue-specific seat data is connected. "
+            "For now, KickSeatz shows the venue details on the ticket itself without inventing a stadium map."
+        )
+        return
+
+    game_week = normalize_week(ticket.get("week"))
+    section_inventory = [
+        item for item in inventory
+        if normalize_week(item.get("week")) == game_week
+        and int(item.get("available_quantity", 0)) >= int(ticket_count)
+    ]
+
+    if not section_inventory:
+        st.info("No section-level demo inventory is available for this matchup yet.")
+        return
+
+    section_names = sorted(
+        {str(item.get("section")) for item in section_inventory},
+        key=lambda value: int("".join(ch for ch in value if ch.isdigit()) or 9999),
+    )
+
+    by_level = {"100 Level": [], "200 Level": [], "300 Level": []}
+    for section_name in section_names:
+        number = get_section_number(section_name)
+        if number is not None and 101 <= number <= 199:
+            by_level["100 Level"].append(section_name)
+        elif number is not None and 200 <= number <= 299:
+            by_level["200 Level"].append(section_name)
+        elif number is not None and number >= 300:
+            by_level["300 Level"].append(section_name)
+
+    st.markdown("**Choose a section**")
+    st.caption(
+        "This is a clickable section map built from KickSeatz's MBS seating baseline. "
+        "Selecting a section filters the ticket choices below."
+    )
+
+    current_section = str(st.session_state.get("kz_map_section", ticket.get("section", "")))
+    if current_section not in section_names:
+        current_section = section_names[0]
+        st.session_state["kz_map_section"] = current_section
+
+    # Stadium presentation: field in the center, section buttons by level.
+    st.markdown(
+        '<div class="interactive-map-field">🏈 FIELD • ATLANTA</div>',
+        unsafe_allow_html=True,
+    )
+
+    for level_name, levels in by_level.items():
+        if not levels:
+            continue
+        st.markdown(f'<div class="map-level-label">{level_name}</div>', unsafe_allow_html=True)
+        columns = st.columns(min(8, max(1, len(levels))))
+        for index, section_name in enumerate(levels):
+            with columns[index % len(columns)]:
+                if st.button(
+                    f"{section_name}",
+                    key=f"kz_interactive_map_{game_week}_{level_name}_{section_name}",
+                    use_container_width=True,
+                    type="primary" if current_section == section_name else "secondary",
+                    help=f"View available demo tickets in Section {section_name}",
+                ):
+                    st.session_state["kz_map_section"] = section_name
+                    st.session_state.pop("kz_selected_ticket_id", None)
+                    st.rerun()
+
+    selected_rows = [
+        item for item in section_inventory
+        if str(item.get("section")) == str(current_section)
+    ]
+
+    st.markdown(
+        f"### Section {current_section}",
+    )
+    st.caption(
+        f"{len(selected_rows)} demo listing(s) currently loaded for this section • Mercedes-Benz Stadium"
+    )
+
+    for option_index, section_ticket in enumerate(selected_rows[:6], start=1):
+        cols = st.columns([2.2, 1, 1.2, 1.1])
+        with cols[0]:
+            st.markdown(
+                f"**Section {section_ticket.get('section')} • Row {section_ticket.get('row')}**"
+            )
+        with cols[1]:
+            st.markdown(
+                f'<div class="market-price">${float(section_ticket.get("price", 0)):.0f}</div>',
+                unsafe_allow_html=True,
+            )
+        with cols[2]:
+            st.caption(
+                f"{int(section_ticket.get('available_quantity', 0))} available"
+            )
+        with cols[3]:
+            if st.button(
+                "View ticket",
+                key=f"kz_interactive_map_ticket_{section_ticket.get('id')}_{option_index}",
+                use_container_width=True,
+            ):
+                st.session_state["kz_selected_ticket_id"] = section_ticket.get("id")
+                st.rerun()
+
+
 def get_price_history_for_ticket(ticket_id):
     history_conn = sqlite3.connect(DB_PATH)
 
@@ -4140,14 +4269,13 @@ def render_platform_nav():
         unsafe_allow_html=True,
     )
 
-    nav = st.columns(5)
     items = [
         ("🏠 Home", "home"),
         ("🎯 Find My Game", "find_game"),
         ("🎟️ Find Tickets", "find_tickets"),
-        ("🧾 Rate My Ticket", "rate_ticket"),
-        ("🔔 Price Alerts", "alerts"),
+        ("🧾 My Tickets", "my_tickets"),
     ]
+    nav = st.columns(len(items))
 
     for column, (label, page_name) in zip(nav, items):
         with column:
@@ -4189,8 +4317,8 @@ def render_platform_home():
     cards = [
         (c1, "🎯", "Find My Game", "Answer a few questions and get games matched to your preferences.", "find_game"),
         (c2, "🎟️", "Find Tickets", "Choose a game, set your budget, and compare the strongest ticket options.", "find_tickets"),
-        (c3, "🧾", "Rate My Ticket", "Already bought a ticket? Enter it and see how KickSeatz rates the deal.", "rate_ticket"),
-        (c4, "🔔", "Price Alerts", "Watch a ticket and let KickSeatz flag a recorded price drop.", "alerts"),
+        (c3, "🧾", "My Tickets", "Rate a ticket you bought or are considering, and manage your saved price watches.", "my_tickets"),
+        (c4, "🏟️", "Explore NFL", "Browse the NFL schedule and see venue details when you open a ticket.", "find_tickets"),
     ]
 
     for column, icon, title, description, target in cards:
@@ -4221,30 +4349,9 @@ def render_platform_home():
                     unsafe_allow_html=True,
                 )
 
-    with st.expander("🏟️ NFL Venue Coverage", expanded=False):
-        st.write(
-            f"KickSeatz is prepared for {len(NFL_TEAM_VENUES)} NFL clubs across "
-            f"{len(NFL_UNIQUE_VENUES)} unique home venues."
-        )
-        st.caption(
-            "Mercedes-Benz Stadium has the detailed interactive demo seating baseline today. "
-            "Other venues are registered so venue-specific seating and live Ticketmaster inventory "
-            "can plug into the same platform later."
-        )
-        venue_rows = []
-        for team_name in sorted(NFL_TEAM_VENUES):
-            info = NFL_TEAM_VENUES[team_name]
-            venue_rows.append({
-                "Team": team_name,
-                "Venue": info["venue"],
-                "Location": info["location"],
-                "Map Status": "Interactive demo" if info["map_status"] == "interactive_demo" else "Venue registered",
-            })
-        st.dataframe(
-            venue_rows,
-            use_container_width=True,
-            hide_index=True,
-        )
+    st.caption(
+        "Venue details appear when you open a ticket. KickSeatz keeps the venue layer behind the marketplace experience instead of showing a separate stadium directory."
+    )
 
     st.caption(
         "Ticket-level availability and live pricing will come from Ticketmaster when authorized live inventory is connected."
@@ -4524,6 +4631,22 @@ def render_platform_alerts():
                     st.rerun()
 
 
+def render_platform_my_tickets():
+    """One user-facing space for owned/considered tickets and saved price watches."""
+    st.markdown("## 🧾 My Tickets")
+    st.caption(
+        "Rate a ticket you already bought or are considering, then manage the price watches you saved."
+    )
+
+    st.markdown("### 🎟️ Rate My Ticket")
+    render_platform_rate_ticket()
+
+    st.divider()
+
+    st.markdown("### 🔔 My Price Watches")
+    render_platform_alerts()
+
+
 if "kz_page" not in st.session_state:
     st.session_state["kz_page"] = "home"
 
@@ -4538,12 +4661,8 @@ if current_platform_page == "find_game":
     render_platform_find_game()
     st.stop()
 
-if current_platform_page == "rate_ticket":
-    render_platform_rate_ticket()
-    st.stop()
-
-if current_platform_page == "alerts":
-    render_platform_alerts()
+if current_platform_page == "my_tickets":
+    render_platform_my_tickets()
     st.stop()
 
 st.caption(
@@ -5255,77 +5374,10 @@ with left:
         unsafe_allow_html=True,
     )
 
-    # ========================================================
-    # INTERACTIVE MARKETPLACE SECTION EXPLORER
-    # ========================================================
-
-    game_week = normalize_week(ticket.get("week"))
-    section_inventory = [
-        item for item in inventory
-        if normalize_week(item.get("week")) == game_week
-        and int(item.get("available_quantity", 0)) >= ticket_count
-    ]
-
-    section_names = sorted(
-        {str(item.get("section")) for item in section_inventory},
-        key=lambda value: int("".join(ch for ch in value if ch.isdigit()) or 9999),
-    )
-
-    if section_names:
-        st.markdown("**Explore this game's sections**")
-        st.caption("Select a section to preview available demo listings. Live seat-level selection will replace this layer when Ticketmaster Top Picks access is connected.")
-
-        selected_map_section = st.session_state.get("kz_map_section")
-        if selected_map_section not in section_names:
-            selected_map_section = str(ticket.get("section"))
-            if selected_map_section not in section_names:
-                selected_map_section = section_names[0]
-            st.session_state["kz_map_section"] = selected_map_section
-
-        map_columns = st.columns(min(6, len(section_names)))
-        for index, section_name in enumerate(section_names):
-            column = map_columns[index % len(map_columns)]
-            with column:
-                if st.button(
-                    f"Sec {section_name}",
-                    key=f"kz_map_section_{game_week}_{section_name}",
-                    use_container_width=True,
-                    type="primary" if selected_map_section == section_name else "secondary",
-                ):
-                    st.session_state["kz_map_section"] = section_name
-                    st.rerun()
-
-        selected_section_rows = [
-            item for item in section_inventory
-            if str(item.get("section")) == str(st.session_state.get("kz_map_section"))
-        ]
-
-        for option_index, section_ticket in enumerate(selected_section_rows[:4], start=1):
-            card_left, card_mid, card_right = st.columns([2, 1.2, 1])
-            with card_left:
-                st.markdown(
-                    f"**Section {section_ticket.get('section')} • Row {section_ticket.get('row')}**"
-                )
-            with card_mid:
-                st.markdown(
-                    f'<div class="market-price">${float(section_ticket.get("price", 0)):.0f}</div>',
-                    unsafe_allow_html=True,
-                )
-            with card_right:
-                if st.button(
-                    "View ticket",
-                    key=f"kz_view_section_ticket_{section_ticket.get('id')}_{option_index}",
-                    use_container_width=True,
-                ):
-                    st.session_state["kz_selected_ticket_id"] = section_ticket.get("id")
-                    st.rerun()
-
-    # Render the SVG as a dedicated HTML component so Streamlit does not
-    # expose the SVG/HTML markup as visible text.
-    st.components.v1.html(
-        get_schematic_seat_map_svg(ticket),
-        height=360,
-        scrolling=False,
+    render_interactive_mbs_map(
+        ticket,
+        game,
+        ticket_count,
     )
 
     if TOP_PICKS_ENABLED:
@@ -6320,13 +6372,17 @@ for i, (col, option) in enumerate(
             unsafe_allow_html=True,
         )
 
+        matchup_word = "vs" if option_game.get("home_game") or option_game.get("international_game") else "at"
         st.markdown(
-            f"**Falcons vs {option_game['opponent']}**"
+            f"**Falcons {matchup_word} {option_game['opponent']}**"
         )
 
         st.markdown(
             f"💺 Section {option_ticket['section']} "
             f"• Row {option_ticket['row']}"
+        )
+        st.caption(
+            f"🏟️ {option_game.get('venue', 'Venue TBD')}"
         )
 
         st.markdown(
@@ -6848,95 +6904,10 @@ if len(rate_options) >= 2:
         )
 
 st.caption(
-    "Core MVP features: Smart Finder • Game Selector • Best Seats • Custom Mix • "
-    "Advanced Filters • Price Watch • Seat Map • Rate My Ticket • Deal Analysis • "
-    "Price Benchmark • Ticket Comparison • CSV Export"
+    "Core MVP features: Find My Game • Find Tickets • My Tickets • Scoring • Price Watch • "
+    "Interactive Seat Map • Explain Why • Ticket Comparison • CSV Export"
 )
 
-
-# ============================================================
-# MY PRICE WATCHES
-# ============================================================
-
-all_watches = get_all_price_watches()
-
-st.markdown(
-    '<div class="section-title">🔔 My Price Watches</div>',
-    unsafe_allow_html=True,
-)
-
-if not all_watches:
-    st.info(
-        "No price watches saved yet. Use Price Watch on a ticket to track it."
-    )
-else:
-    for watch_index, watch_row in enumerate(all_watches, start=1):
-        watch_ticket_id = int(watch_row[0])
-        watched_ticket = next(
-            (
-                item
-                for item in inventory
-                if int(item.get("id")) == watch_ticket_id
-            ),
-            None,
-        )
-
-        if not watched_ticket:
-            st.caption(
-                f"Saved watch #{watch_index} references ticket ID {watch_ticket_id}, "
-                "which is not currently in the loaded inventory."
-            )
-            continue
-
-        watched_game = get_game_by_week(
-            watched_ticket.get("week")
-        )
-
-        current_price = float(watched_ticket["price"])
-        target_price = float(watch_row[1])
-
-        with st.container(border=True):
-            w1, w2, w3, w4 = st.columns(4)
-
-            with w1:
-                st.markdown(
-                    f"**Falcons vs {watched_game.get('opponent', 'Unknown')}**"
-                )
-                st.caption(
-                    f"Sec {watched_ticket['section']} • "
-                    f"Row {watched_ticket['row']}"
-                )
-
-            with w2:
-                st.metric(
-                    "Current",
-                    f"${current_price:.0f}"
-                )
-
-            with w3:
-                st.metric(
-                    "Target",
-                    f"${target_price:.0f}"
-                )
-
-            with w4:
-                if current_price <= target_price:
-                    st.success("Target reached")
-                else:
-                    st.caption(
-                        f"${current_price - target_price:.0f} above target"
-                    )
-
-                if st.button(
-                    "Remove",
-                    key=f"remove_saved_watch_{watch_ticket_id}",
-                ):
-                    remove_price_watch(watch_ticket_id)
-                    st.rerun()
-
-st.caption(
-    "Watch status is based on the latest price currently loaded by KickSeatz."
-)
 
 # ============================================================
 # TICKETMASTER PARTNER ACCESS STATUS
