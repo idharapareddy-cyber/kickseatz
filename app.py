@@ -562,43 +562,6 @@ MBS_BASELINE_SECTIONS = [
 
 MBS_DEMO_ROWS = ["4", "8", "12", "18"]
 
-# Explicit display order for the complete Mercedes-Benz Stadium home slate.
-# Keeping this list separate prevents older schedule JSON from shrinking the
-# UI back to a partial four-game schedule.
-MBS_HOME_GAME_WEEKS = (2, 5, 6, 7, 10, 13, 16, 17)
-
-
-def get_mbs_home_games_for_display(dataset=None):
-    """Return all 8 current MBS home games in a deterministic order."""
-    source_games = dataset if isinstance(dataset, list) else (
-        dataset.get("games", [])
-        if isinstance(dataset, dict)
-        else []
-    )
-
-    by_key = {}
-    for game in source_games:
-        if not isinstance(game, dict):
-            continue
-        match = re.search(r"\d+", str(game.get("week", "")))
-        if not match:
-            continue
-        opponent = str(game.get("opponent", "")).strip().lower()
-        by_key[(int(match.group()), opponent)] = dict(game)
-
-    result = []
-    for baseline in MBS_HOME_GAME_BASELINE:
-        week = int(baseline["week"])
-        opponent = str(baseline["opponent"]).strip()
-        game = by_key.get((week, opponent.lower()), {})
-        game.update(baseline)
-        game.setdefault("home_game", True)
-        game.setdefault("venue", "Mercedes-Benz Stadium")
-        result.append(game)
-
-    result.sort(key=lambda g: MBS_HOME_GAME_WEEKS.index(int(g.get("week"))))
-    return result
-
 
 def _demo_price_multiplier(week):
     """Small matchup-based demo adjustment; not a market-price claim."""
@@ -3131,27 +3094,13 @@ st.markdown("""
 # HOME GAME VISUALS
 # ============================================================
 
-home_visual_games = get_mbs_home_games_for_display(master_dataset)
+home_visual_games = get_game_selector_options()
 
 if home_visual_games:
     st.markdown(
         '<h2 class="section-title">🏟️ 2026 Mercedes-Benz Stadium Home Games</h2>',
         unsafe_allow_html=True,
     )
-    st.caption(
-        f"{len(home_visual_games)} regular-season home games at Mercedes-Benz Stadium. "
-        "Seat locations are based on the stadium layout; demo prices and availability "
-        "are used until live Ticketmaster seat inventory is authorized."
-    )
-
-    st.info(
-        "Home-game baseline loaded: "
-        + " • ".join(
-            f"Wk {game.get('week')} {game.get('opponent')}"
-            for game in home_visual_games
-        )
-    )
-
     for start in range(0, len(home_visual_games), 2):
         pair = home_visual_games[start:start + 2]
         columns = st.columns(len(pair))
@@ -3249,7 +3198,7 @@ if priority == "Custom Mix":
         "Weights are automatically normalized to 100%."
     )
 
-selector_games = get_mbs_home_games_for_display(master_dataset)
+selector_games = get_game_selector_options()
 game_selector_labels = ["All MBS Home Games"] + [
     f"Week {g.get('week')} • Falcons vs {g.get('opponent')} • {g.get('game_date', 'Date N/A')}"
     for g in selector_games
