@@ -472,6 +472,266 @@ MBS_HOME_GAME_BASELINE = [
 
 
 # ============================================================
+# NFL-WIDE VENUE REGISTRY
+# ============================================================
+#
+# KickSeatz is being structured as an NFL-wide platform. The registry
+# covers all 32 clubs and their current primary home venue, including
+# shared stadiums. It is intentionally separate from seat-level
+# inventory: only Mercedes-Benz Stadium has the detailed demo seating
+# baseline in this MVP. Other venues are registered now so live or
+# venue-specific seating data can plug in later without redesigning the
+# recommendation engine.
+#
+# Venue names are descriptive metadata; this block does not claim that
+# any section/row is currently for sale.
+
+NFL_TEAM_VENUES = {
+    "Arizona Cardinals": {
+        "venue": "State Farm Stadium",
+        "location": "Glendale, AZ",
+        "venue_key": "state_farm_stadium",
+        "map_status": "venue_registered",
+    },
+    "Atlanta Falcons": {
+        "venue": "Mercedes-Benz Stadium",
+        "location": "Atlanta, GA",
+        "venue_key": "mercedes_benz_stadium",
+        "map_status": "interactive_demo",
+    },
+    "Baltimore Ravens": {
+        "venue": "M&T Bank Stadium",
+        "location": "Baltimore, MD",
+        "venue_key": "mt_bank_stadium",
+        "map_status": "venue_registered",
+    },
+    "Buffalo Bills": {
+        "venue": "Highmark Stadium",
+        "location": "Orchard Park, NY",
+        "venue_key": "highmark_stadium",
+        "map_status": "venue_registered",
+    },
+    "Carolina Panthers": {
+        "venue": "Bank of America Stadium",
+        "location": "Charlotte, NC",
+        "venue_key": "bank_of_america_stadium",
+        "map_status": "venue_registered",
+    },
+    "Chicago Bears": {
+        "venue": "Soldier Field",
+        "location": "Chicago, IL",
+        "venue_key": "soldier_field",
+        "map_status": "venue_registered",
+    },
+    "Cincinnati Bengals": {
+        "venue": "Paycor Stadium",
+        "location": "Cincinnati, OH",
+        "venue_key": "paycor_stadium",
+        "map_status": "venue_registered",
+    },
+    "Cleveland Browns": {
+        "venue": "Huntington Bank Field",
+        "location": "Cleveland, OH",
+        "venue_key": "huntington_bank_field",
+        "map_status": "venue_registered",
+    },
+    "Dallas Cowboys": {
+        "venue": "AT&T Stadium",
+        "location": "Arlington, TX",
+        "venue_key": "att_stadium",
+        "map_status": "venue_registered",
+    },
+    "Denver Broncos": {
+        "venue": "Empower Field at Mile High",
+        "location": "Denver, CO",
+        "venue_key": "empower_field",
+        "map_status": "venue_registered",
+    },
+    "Detroit Lions": {
+        "venue": "Ford Field",
+        "location": "Detroit, MI",
+        "venue_key": "ford_field",
+        "map_status": "venue_registered",
+    },
+    "Green Bay Packers": {
+        "venue": "Lambeau Field",
+        "location": "Green Bay, WI",
+        "venue_key": "lambeau_field",
+        "map_status": "venue_registered",
+    },
+    "Houston Texans": {
+        "venue": "NRG Stadium",
+        "location": "Houston, TX",
+        "venue_key": "nrg_stadium",
+        "map_status": "venue_registered",
+    },
+    "Indianapolis Colts": {
+        "venue": "Lucas Oil Stadium",
+        "location": "Indianapolis, IN",
+        "venue_key": "lucas_oil_stadium",
+        "map_status": "venue_registered",
+    },
+    "Jacksonville Jaguars": {
+        "venue": "EverBank Stadium",
+        "location": "Jacksonville, FL",
+        "venue_key": "everbank_stadium",
+        "map_status": "venue_registered",
+    },
+    "Kansas City Chiefs": {
+        "venue": "GEHA Field at Arrowhead Stadium",
+        "location": "Kansas City, MO",
+        "venue_key": "arrowhead_stadium",
+        "map_status": "venue_registered",
+    },
+    "Las Vegas Raiders": {
+        "venue": "Allegiant Stadium",
+        "location": "Las Vegas, NV",
+        "venue_key": "allegiant_stadium",
+        "map_status": "venue_registered",
+    },
+    "Los Angeles Chargers": {
+        "venue": "SoFi Stadium",
+        "location": "Inglewood, CA",
+        "venue_key": "sofi_stadium",
+        "shared_with": "Los Angeles Rams",
+        "map_status": "venue_registered",
+    },
+    "Los Angeles Rams": {
+        "venue": "SoFi Stadium",
+        "location": "Inglewood, CA",
+        "venue_key": "sofi_stadium",
+        "shared_with": "Los Angeles Chargers",
+        "map_status": "venue_registered",
+    },
+    "Miami Dolphins": {
+        "venue": "Hard Rock Stadium",
+        "location": "Miami Gardens, FL",
+        "venue_key": "hard_rock_stadium",
+        "map_status": "venue_registered",
+    },
+    "Minnesota Vikings": {
+        "venue": "U.S. Bank Stadium",
+        "location": "Minneapolis, MN",
+        "venue_key": "us_bank_stadium",
+        "map_status": "venue_registered",
+    },
+    "New England Patriots": {
+        "venue": "Gillette Stadium",
+        "location": "Foxborough, MA",
+        "venue_key": "gillette_stadium",
+        "map_status": "venue_registered",
+    },
+    "New Orleans Saints": {
+        "venue": "Caesars Superdome",
+        "location": "New Orleans, LA",
+        "venue_key": "caesars_superdome",
+        "map_status": "venue_registered",
+    },
+    "New York Giants": {
+        "venue": "MetLife Stadium",
+        "location": "East Rutherford, NJ",
+        "venue_key": "metlife_stadium",
+        "shared_with": "New York Jets",
+        "map_status": "venue_registered",
+    },
+    "New York Jets": {
+        "venue": "MetLife Stadium",
+        "location": "East Rutherford, NJ",
+        "venue_key": "metlife_stadium",
+        "shared_with": "New York Giants",
+        "map_status": "venue_registered",
+    },
+    "Philadelphia Eagles": {
+        "venue": "Lincoln Financial Field",
+        "location": "Philadelphia, PA",
+        "venue_key": "lincoln_financial_field",
+        "map_status": "venue_registered",
+    },
+    "Pittsburgh Steelers": {
+        "venue": "Acrisure Stadium",
+        "location": "Pittsburgh, PA",
+        "venue_key": "acrisure_stadium",
+        "map_status": "venue_registered",
+    },
+    "San Francisco 49ers": {
+        "venue": "Levi's Stadium",
+        "location": "Santa Clara, CA",
+        "venue_key": "levis_stadium",
+        "map_status": "venue_registered",
+    },
+    "Seattle Seahawks": {
+        "venue": "Lumen Field",
+        "location": "Seattle, WA",
+        "venue_key": "lumen_field",
+        "map_status": "venue_registered",
+    },
+    "Tampa Bay Buccaneers": {
+        "venue": "Raymond James Stadium",
+        "location": "Tampa, FL",
+        "venue_key": "raymond_james_stadium",
+        "map_status": "venue_registered",
+    },
+    "Tennessee Titans": {
+        "venue": "Nissan Stadium",
+        "location": "Nashville, TN",
+        "venue_key": "nissan_stadium",
+        "map_status": "venue_registered",
+    },
+    "Washington Commanders": {
+        "venue": "Northwest Stadium",
+        "location": "Landover, MD",
+        "venue_key": "northwest_stadium",
+        "map_status": "venue_registered",
+    },
+}
+
+NFL_UNIQUE_VENUES = sorted({
+    data["venue"]
+    for data in NFL_TEAM_VENUES.values()
+})
+
+# 2026 international host venues used by the NFL schedule. These are
+# registered so international/neutral games can use the same venue layer.
+NFL_INTERNATIONAL_VENUES_2026 = {
+    "Tottenham Hotspur Stadium": {"location": "London, UK", "map_status": "venue_registered"},
+    "Wembley Stadium": {"location": "London, UK", "map_status": "venue_registered"},
+    "Bernabéu Stadium": {"location": "Madrid, Spain", "map_status": "venue_registered"},
+    "Melbourne Cricket Ground": {"location": "Melbourne, Australia", "map_status": "venue_registered"},
+    "Estadio Banorte": {"location": "Mexico City, Mexico", "map_status": "venue_registered"},
+    "FC Bayern Munich Arena": {"location": "Munich, Germany", "map_status": "venue_registered"},
+    "Stade de France": {"location": "Paris, France", "map_status": "venue_registered"},
+    "Maracanã Stadium": {"location": "Rio de Janeiro, Brazil", "map_status": "venue_registered"},
+}
+
+
+def get_team_venue_info(team_name):
+    """Return venue metadata for an NFL club without fabricating seat inventory."""
+    info = NFL_TEAM_VENUES.get(str(team_name or "").strip())
+    return dict(info) if info else None
+
+
+def get_game_venue_info(game):
+    """Resolve the venue metadata used by a schedule/game record."""
+    if not isinstance(game, dict):
+        return None
+
+    venue_name = str(game.get("venue", "")).strip()
+
+    for team_name, info in NFL_TEAM_VENUES.items():
+        if info.get("venue") == venue_name:
+            resolved = dict(info)
+            resolved["team"] = team_name
+            return resolved
+
+    if venue_name in NFL_INTERNATIONAL_VENUES_2026:
+        resolved = dict(NFL_INTERNATIONAL_VENUES_2026[venue_name])
+        resolved["venue"] = venue_name
+        return resolved
+
+    return None
+
+
+# ============================================================
 # COMPLETE 2026 FALCONS REGULAR-SEASON SCHEDULE
 # ============================================================
 # Full schedule and venue baseline. MBS home games have demo seat
@@ -994,21 +1254,38 @@ def ensure_mbs_demo_inventory(db_path):
 # ============================================================
 
 NFL_LOGO_CODES = {
+    "Arizona Cardinals": "ari",
     "Atlanta Falcons": "atl",
-    "Carolina Panthers": "car",
     "Baltimore Ravens": "bal",
+    "Buffalo Bills": "buf",
+    "Carolina Panthers": "car",
     "Chicago Bears": "chi",
-    "San Francisco 49ers": "sf",
-    "Kansas City Chiefs": "kc",
-    "Detroit Lions": "det",
-    "Tampa Bay Buccaneers": "tb",
-    "New Orleans Saints": "no",
-    "Pittsburgh Steelers": "pit",
-    "Green Bay Packers": "gb",
-    "Cleveland Browns": "cle",
-    "Washington Commanders": "wsh",
-    "Minnesota Vikings": "min",
     "Cincinnati Bengals": "cin",
+    "Cleveland Browns": "cle",
+    "Dallas Cowboys": "dal",
+    "Denver Broncos": "den",
+    "Detroit Lions": "det",
+    "Green Bay Packers": "gb",
+    "Houston Texans": "hou",
+    "Indianapolis Colts": "ind",
+    "Jacksonville Jaguars": "jax",
+    "Kansas City Chiefs": "kc",
+    "Las Vegas Raiders": "lv",
+    "Los Angeles Chargers": "lac",
+    "Los Angeles Rams": "lar",
+    "Miami Dolphins": "mia",
+    "Minnesota Vikings": "min",
+    "New England Patriots": "ne",
+    "New Orleans Saints": "no",
+    "New York Giants": "nyg",
+    "New York Jets": "nyj",
+    "Philadelphia Eagles": "phi",
+    "Pittsburgh Steelers": "pit",
+    "San Francisco 49ers": "sf",
+    "Seattle Seahawks": "sea",
+    "Tampa Bay Buccaneers": "tb",
+    "Tennessee Titans": "ten",
+    "Washington Commanders": "wsh",
 }
 
 
@@ -3727,6 +4004,552 @@ def clear_app_cache_and_rerun():
 
 
 # ============================================================
+
+# ============================================================
+# KICKSEATZ PLATFORM NAVIGATION / MARKETPLACE SHELL
+# ============================================================
+
+st.markdown("""
+<style>
+
+/* Consumer-style top navigation */
+.kz-nav {
+    position: sticky;
+    top: 0;
+    z-index: 999;
+    padding: 8px 0 12px 0;
+    margin: -8px 0 18px 0;
+    background: rgba(248,250,252,.96);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(148,163,184,.20);
+}
+
+.kz-brand {
+    font-size: 24px;
+    font-weight: 900;
+    letter-spacing: -.03em;
+    color: #111827;
+    margin: 0;
+}
+
+.kz-subbrand {
+    font-size: 12px;
+    color: #64748b;
+    margin: -2px 0 0 0;
+}
+
+.market-hero {
+    padding: 34px 36px;
+    border-radius: 24px;
+    background: linear-gradient(135deg, #a71930 0%, #171717 100%);
+    color: white;
+    box-shadow: 0 12px 34px rgba(15,23,42,.15);
+    margin: 8px 0 24px 0;
+}
+
+.market-hero h1 {
+    font-size: 46px;
+    margin: 0 0 8px 0;
+    font-weight: 900;
+    letter-spacing: -.035em;
+}
+
+.market-hero p {
+    margin: 0;
+    font-size: 18px;
+}
+
+.market-card {
+    border: 1px solid rgba(148,163,184,.22);
+    border-radius: 20px;
+    padding: 22px;
+    background: white;
+    box-shadow: 0 7px 24px rgba(15,23,42,.07);
+    min-height: 160px;
+    margin-bottom: 14px;
+}
+
+.market-card h3 {
+    margin: 0 0 6px 0;
+    font-size: 22px;
+}
+
+.market-card p {
+    color: #64748b;
+    margin: 0;
+}
+
+.market-section-label {
+    font-size: 13px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: #64748b;
+    margin: 6px 0 10px 0;
+}
+
+.market-ticket-card {
+    border: 1px solid rgba(148,163,184,.20);
+    border-radius: 18px;
+    padding: 18px;
+    background: white;
+    box-shadow: 0 5px 18px rgba(15,23,42,.06);
+    margin-bottom: 12px;
+}
+
+.market-ticket-card .market-price {
+    font-size: 30px;
+    font-weight: 900;
+    color: #111827;
+}
+
+.market-ticket-card .market-score {
+    font-size: 18px;
+    font-weight: 800;
+    color: #a71930;
+}
+
+@media (max-width: 768px) {
+    .market-hero {
+        padding: 24px 20px;
+        border-radius: 18px;
+    }
+
+    .market-hero h1 {
+        font-size: 34px;
+    }
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+def _kz_navigate(page_name):
+    st.session_state["kz_page"] = page_name
+    st.rerun()
+
+
+def render_platform_nav():
+    current_page = st.session_state.get("kz_page", "home")
+
+    st.markdown(
+        '<div class="kz-nav">'
+        '<div class="kz-brand">🏟️ KickSeatz</div>'
+        '<div class="kz-subbrand">NFL ticket discovery, simplified</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    nav = st.columns(5)
+    items = [
+        ("🏠 Home", "home"),
+        ("🎯 Find My Game", "find_game"),
+        ("🎟️ Find Tickets", "find_tickets"),
+        ("🧾 Rate My Ticket", "rate_ticket"),
+        ("🔔 Price Alerts", "alerts"),
+    ]
+
+    for column, (label, page_name) in zip(nav, items):
+        with column:
+            st.button(
+                label,
+                key=f"kz_nav_{page_name}",
+                use_container_width=True,
+                type="primary" if current_page == page_name else "secondary",
+                on_click=_kz_navigate,
+                args=(page_name,),
+            )
+
+
+def _get_kz_schedule_games():
+    games = []
+    for game in FULL_FALCONS_2026_SCHEDULE:
+        if isinstance(game, dict) and not game.get("bye"):
+            games.append(dict(game))
+    games.sort(key=lambda g: normalize_week(g.get("week")) or 999)
+    return games
+
+
+def render_platform_home():
+    st.markdown(
+        """
+        <div class="market-hero">
+            <h1>Find your next NFL game.</h1>
+            <p>KickSeatz helps you find a game and ticket that actually fits what you want.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="market-section-label">What are you looking for?</div>', unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    c3, c4 = st.columns(2)
+
+    cards = [
+        (c1, "🎯", "Find My Game", "Answer a few questions and get games matched to your preferences.", "find_game"),
+        (c2, "🎟️", "Find Tickets", "Choose a game, set your budget, and compare the strongest ticket options.", "find_tickets"),
+        (c3, "🧾", "Rate My Ticket", "Already bought a ticket? Enter it and see how KickSeatz rates the deal.", "rate_ticket"),
+        (c4, "🔔", "Price Alerts", "Watch a ticket and let KickSeatz flag a recorded price drop.", "alerts"),
+    ]
+
+    for column, icon, title, description, target in cards:
+        with column:
+            st.markdown(
+                f'<div class="market-card"><h3>{icon} {title}</h3><p>{description}</p></div>',
+                unsafe_allow_html=True,
+            )
+            st.button(
+                title,
+                key=f"home_{target}",
+                use_container_width=True,
+                on_click=_kz_navigate,
+                args=(target,),
+            )
+
+    st.markdown('<div class="market-section-label">Upcoming Falcons games</div>', unsafe_allow_html=True)
+
+    schedule_games = _get_kz_schedule_games()
+    for start in range(0, len(schedule_games), 2):
+        pair = schedule_games[start:start + 2]
+        cols = st.columns(len(pair))
+        for col, game in zip(cols, pair):
+            with col:
+                matchup = "Falcons vs" if game.get("home_game") or game.get("international_game") else "Falcons at"
+                st.markdown(
+                    render_home_matchup_card(game) if game.get("home_game") else render_schedule_matchup_card(game),
+                    unsafe_allow_html=True,
+                )
+
+    with st.expander("🏟️ NFL Venue Coverage", expanded=False):
+        st.write(
+            f"KickSeatz is prepared for {len(NFL_TEAM_VENUES)} NFL clubs across "
+            f"{len(NFL_UNIQUE_VENUES)} unique home venues."
+        )
+        st.caption(
+            "Mercedes-Benz Stadium has the detailed interactive demo seating baseline today. "
+            "Other venues are registered so venue-specific seating and live Ticketmaster inventory "
+            "can plug into the same platform later."
+        )
+        venue_rows = []
+        for team_name in sorted(NFL_TEAM_VENUES):
+            info = NFL_TEAM_VENUES[team_name]
+            venue_rows.append({
+                "Team": team_name,
+                "Venue": info["venue"],
+                "Location": info["location"],
+                "Map Status": "Interactive demo" if info["map_status"] == "interactive_demo" else "Venue registered",
+            })
+        st.dataframe(
+            venue_rows,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.caption(
+        "Ticket-level availability and live pricing will come from Ticketmaster when authorized live inventory is connected."
+    )
+
+
+def render_platform_find_game():
+    st.markdown("## 🎯 Find My Game")
+    st.write(
+        "Tell KickSeatz what matters to you. Your answers shape the games shown first."
+    )
+
+    with st.form("kz_find_game_form"):
+        left, right = st.columns(2)
+
+        with left:
+            fan_type = st.selectbox(
+                "What type of fan are you?",
+                [
+                    "Die-hard Falcons fan",
+                    "Rivalry fan",
+                    "Big matchup / star-game fan",
+                    "Casual / social fan",
+                    "Road-trip fan",
+                ],
+                key="kz_profile_fan_type",
+            )
+            travel = st.selectbox(
+                "How far are you willing to travel?",
+                [
+                    "Atlanta only",
+                    "Up to 500 miles",
+                    "Up to 1,000 miles",
+                    "Anywhere in the U.S.",
+                    "Anywhere, including international",
+                ],
+                key="kz_profile_travel",
+            )
+            area = st.selectbox(
+                "Where do you prefer to sit?",
+                [
+                    "No preference",
+                    "Lower Bowl",
+                    "Upper Bowl",
+                    "Club / Premium",
+                ],
+                key="kz_profile_area",
+            )
+
+        with right:
+            vibe = st.selectbox(
+                "What kind of game experience do you want?",
+                [
+                    "Rivalry atmosphere",
+                    "Elite opponent / marquee matchup",
+                    "Affordable / value-focused",
+                    "Home-field experience",
+                    "Unique travel experience",
+                ],
+                key="kz_profile_vibe",
+            )
+            budget_band = st.selectbox(
+                "What's your ticket budget?",
+                [
+                    "Under $75/ticket",
+                    "$75–$125/ticket",
+                    "$125–$200/ticket",
+                    "$200+/ticket",
+                ],
+                key="kz_profile_budget",
+            )
+            home_away = st.selectbox(
+                "Home or away?",
+                [
+                    "Prefer home games",
+                    "Either home or away",
+                    "Prefer away games",
+                ],
+                key="kz_profile_home_away",
+            )
+
+        submitted = st.form_submit_button(
+            "Find My Best-Fit Games",
+            use_container_width=True,
+            type="primary",
+        )
+
+    if submitted:
+        preferences = {
+            "fan_type": fan_type,
+            "travel": travel,
+            "area": area,
+            "vibe": vibe,
+            "budget": budget_band,
+            "home_away": home_away,
+        }
+        results = get_personalized_game_recommendations(preferences)
+        st.session_state["kz_quiz_results"] = results
+
+    results = st.session_state.get("kz_quiz_results", [])
+
+    if results:
+        st.markdown("### Your matches")
+        for index, result in enumerate(results[:3], start=1):
+            game = result["game"]
+            matchup = "vs" if game.get("home_game") or game.get("international_game") else "at"
+            with st.container(border=True):
+                left, right = st.columns([4, 1])
+                with left:
+                    st.markdown(
+                        f"### #{index} Falcons {matchup} {game.get('opponent')}"
+                    )
+                    st.caption(
+                        f"Week {game.get('week')} • {game.get('game_date') or 'Date TBD'} • {game.get('venue', 'Venue TBD')}"
+                    )
+                    for reason in result["reasons"]:
+                        st.write(f"✓ {reason}")
+                with right:
+                    st.metric("Match", f"{result['score']}/100")
+                    if st.button(
+                        "Use this game",
+                        key=f"kz_use_game_{index}_{game.get('week')}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["quiz_game_week"] = game.get("week")
+                        _kz_navigate("find_tickets")
+
+
+def render_platform_rate_ticket():
+    st.markdown("## 🧾 Rate My Ticket")
+    st.write(
+        "Rate a KickSeatz listing or enter a ticket you already bought."
+    )
+
+    mode = st.radio(
+        "What are you rating?",
+        ["A KickSeatz ticket", "My purchased ticket"],
+        horizontal=True,
+        key="kz_rate_mode",
+    )
+
+    if mode == "A KickSeatz ticket":
+        rate_options = []
+        labels = []
+        for ticket_item in inventory:
+            game = get_game_by_week(ticket_item.get("week"))
+            if game:
+                rate_options.append((ticket_item, game))
+                labels.append(
+                    f"${ticket_item['price']:.0f} • Falcons vs {game.get('opponent')} • Sec {ticket_item.get('section')} Row {ticket_item.get('row')}"
+                )
+
+        if rate_options:
+            chosen_label = st.selectbox(
+                "Choose a KickSeatz ticket",
+                labels,
+                key="kz_rate_sample_select",
+            )
+            chosen_index = labels.index(chosen_label)
+            ticket_item, game = rate_options[chosen_index]
+            rating = rate_ticket(ticket_item, game)
+        else:
+            st.info("No rateable sample tickets are loaded yet.")
+            return
+
+    else:
+        games = _get_kz_schedule_games()
+        game_labels = [
+            f"Week {game.get('week')} • Falcons {'vs' if game.get('home_game') or game.get('international_game') else 'at'} {game.get('opponent')}"
+            for game in games
+        ]
+        selected_game_label = st.selectbox(
+            "Game",
+            game_labels,
+            key="kz_owned_game",
+        )
+        selected_game = games[game_labels.index(selected_game_label)]
+
+        a, b, c = st.columns(3)
+        with a:
+            paid_price = st.number_input(
+                "Price paid per ticket",
+                min_value=1.0,
+                max_value=5000.0,
+                value=100.0,
+                step=5.0,
+                key="kz_owned_price",
+            )
+        with b:
+            owned_section = st.text_input(
+                "Section",
+                value="123",
+                key="kz_owned_section",
+            )
+        with c:
+            owned_row = st.text_input(
+                "Row",
+                value="8",
+                key="kz_owned_row",
+            )
+
+        owned_ticket = {
+            "id": -1,
+            "week": selected_game.get("week"),
+            "opponent": selected_game.get("opponent"),
+            "game_date": selected_game.get("game_date"),
+            "section": owned_section,
+            "row": owned_row,
+            "price": paid_price,
+            # The ticket is already owned, so availability is not a penalty.
+            "available_quantity": 999,
+            "source": "User-entered ticket",
+        }
+        ticket_item = owned_ticket
+        game = selected_game
+        rating = rate_ticket(ticket_item, game)
+
+    st.markdown(
+        f"### {rating['verdict']}"
+    )
+    left, right = st.columns([3, 1])
+    with left:
+        matchup = "vs" if game.get("home_game") or game.get("international_game") else "at"
+        st.write(
+            f"Falcons {matchup} {game.get('opponent')} • Section {ticket_item.get('section')} • Row {ticket_item.get('row')}"
+        )
+        st.caption(
+            "Your ticket is evaluated against the KickSeatz scoring model. "
+            "For user-entered tickets, availability is not treated as a negative because you already own the ticket."
+        )
+    with right:
+        st.metric("KickSeatz Rating", f"{rating['score']}/100")
+
+    with st.expander("🔎 Explain this rating"):
+        x1, x2, x3, x4 = st.columns(4)
+        x1.metric("Game", f"{rating['game']}/100")
+        x2.metric("Price", f"{rating['price']}/100")
+        x3.metric("Seat", f"{rating['seat']}/100")
+        x4.metric("Availability", f"{rating['availability']}/100")
+
+
+def render_platform_alerts():
+    st.markdown("## 🔔 Price Alerts")
+    st.write("Keep track of tickets you want and see when their recorded price reaches your target.")
+
+    watches = get_all_price_watches()
+    if not watches:
+        st.info("No price watches saved yet. Add one from Find Tickets.")
+        return
+
+    for ticket_id, target_price, created_at, active in watches:
+        match = next((item for item in inventory if int(item.get("id", -1)) == int(ticket_id)), None)
+        if not match:
+            continue
+        game = get_game_by_week(match.get("week"))
+        if not game:
+            continue
+        current = float(match.get("price", 0))
+        triggered = current <= float(target_price)
+        with st.container(border=True):
+            left, right = st.columns([4, 1])
+            with left:
+                matchup = "vs" if game.get("home_game") or game.get("international_game") else "at"
+                st.markdown(
+                    f"### Falcons {matchup} {game.get('opponent')} • Section {match.get('section')} Row {match.get('row')}"
+                )
+                st.write(f"Current: **${current:.0f}** • Target: **${float(target_price):.0f}**")
+                st.caption("🚨 Price target reached." if triggered else "Watching this ticket.")
+            with right:
+                st.metric("Status", "Alert" if triggered else "Watching")
+                if st.button(
+                    "Remove",
+                    key=f"kz_remove_watch_{ticket_id}",
+                    use_container_width=True,
+                ):
+                    remove_price_watch(ticket_id)
+                    st.rerun()
+
+
+if "kz_page" not in st.session_state:
+    st.session_state["kz_page"] = "home"
+
+render_platform_nav()
+current_platform_page = st.session_state.get("kz_page", "home")
+
+if current_platform_page == "home":
+    render_platform_home()
+    st.stop()
+
+if current_platform_page == "find_game":
+    render_platform_find_game()
+    st.stop()
+
+if current_platform_page == "rate_ticket":
+    render_platform_rate_ticket()
+    st.stop()
+
+if current_platform_page == "alerts":
+    render_platform_alerts()
+    st.stop()
+
+st.caption(
+    "KickSeatz marketplace mode • NFL schedule + venue baseline • live seat inventory activates through Ticketmaster Top Picks"
+)
+
 # HERO
 # ============================================================
 
@@ -4292,6 +5115,16 @@ if not candidates:
 
 recommendation = candidates[0]
 
+# A marketplace visitor can explicitly select a ticket from the interactive
+# section/ticket controls. When that happens, show that ticket as the active
+# recommendation while preserving the same scoring engine.
+selected_ticket_id = st.session_state.get("kz_selected_ticket_id")
+if selected_ticket_id is not None:
+    for _candidate in candidates:
+        if _candidate["ticket"].get("id") == selected_ticket_id:
+            recommendation = _candidate
+            break
+
 ticket = recommendation["ticket"]
 game = recommendation["game"]
 score = recommendation["score"]
@@ -4336,8 +5169,10 @@ with left:
         unsafe_allow_html=True,
     )
 
+    matchup_word = "vs" if game.get("home_game") or game.get("international_game") else "at"
+
     st.markdown(
-        f"### Atlanta Falcons vs {game['opponent']}"
+        f"### Atlanta Falcons {matchup_word} {game['opponent']}"
     )
 
     rec_falcons_logo = get_nfl_logo_url("Atlanta Falcons")
@@ -4368,10 +5203,13 @@ with left:
     ]
 
     if game.get("venue"):
-
         details.append(
             f"🏟️ {game.get('venue')}"
         )
+
+        venue_info = get_game_venue_info(game)
+        if venue_info and venue_info.get("map_status") != "interactive_demo":
+            details.append("Map baseline ready")
 
     st.write(
         " • ".join(details)
@@ -4399,11 +5237,8 @@ with left:
             "Ticketmaster event link is unavailable for this matchup."
         )
 
-    if game.get("seatmap_url"):
-        st.link_button(
-            "🗺️ View Seat Map",
-            game["seatmap_url"],
-        )
+    # The in-app map is the primary experience. Venue-specific external
+    # references remain available through Ticketmaster event links when needed.
 
     with st.expander("Ticket Details"):
         st.write(f"Inventory Ticket ID: `{ticket.get('id')}`")
@@ -4420,6 +5255,71 @@ with left:
         unsafe_allow_html=True,
     )
 
+    # ========================================================
+    # INTERACTIVE MARKETPLACE SECTION EXPLORER
+    # ========================================================
+
+    game_week = normalize_week(ticket.get("week"))
+    section_inventory = [
+        item for item in inventory
+        if normalize_week(item.get("week")) == game_week
+        and int(item.get("available_quantity", 0)) >= ticket_count
+    ]
+
+    section_names = sorted(
+        {str(item.get("section")) for item in section_inventory},
+        key=lambda value: int("".join(ch for ch in value if ch.isdigit()) or 9999),
+    )
+
+    if section_names:
+        st.markdown("**Explore this game's sections**")
+        st.caption("Select a section to preview available demo listings. Live seat-level selection will replace this layer when Ticketmaster Top Picks access is connected.")
+
+        selected_map_section = st.session_state.get("kz_map_section")
+        if selected_map_section not in section_names:
+            selected_map_section = str(ticket.get("section"))
+            if selected_map_section not in section_names:
+                selected_map_section = section_names[0]
+            st.session_state["kz_map_section"] = selected_map_section
+
+        map_columns = st.columns(min(6, len(section_names)))
+        for index, section_name in enumerate(section_names):
+            column = map_columns[index % len(map_columns)]
+            with column:
+                if st.button(
+                    f"Sec {section_name}",
+                    key=f"kz_map_section_{game_week}_{section_name}",
+                    use_container_width=True,
+                    type="primary" if selected_map_section == section_name else "secondary",
+                ):
+                    st.session_state["kz_map_section"] = section_name
+                    st.rerun()
+
+        selected_section_rows = [
+            item for item in section_inventory
+            if str(item.get("section")) == str(st.session_state.get("kz_map_section"))
+        ]
+
+        for option_index, section_ticket in enumerate(selected_section_rows[:4], start=1):
+            card_left, card_mid, card_right = st.columns([2, 1.2, 1])
+            with card_left:
+                st.markdown(
+                    f"**Section {section_ticket.get('section')} • Row {section_ticket.get('row')}**"
+                )
+            with card_mid:
+                st.markdown(
+                    f'<div class="market-price">${float(section_ticket.get("price", 0)):.0f}</div>',
+                    unsafe_allow_html=True,
+                )
+            with card_right:
+                if st.button(
+                    "View ticket",
+                    key=f"kz_view_section_ticket_{section_ticket.get('id')}_{option_index}",
+                    use_container_width=True,
+                ):
+                    st.session_state["kz_selected_ticket_id"] = section_ticket.get("id")
+                    st.rerun()
+
     # Render the SVG as a dedicated HTML component so Streamlit does not
     # expose the SVG/HTML markup as visible text.
     st.components.v1.html(
@@ -4427,13 +5327,6 @@ with left:
         height=360,
         scrolling=False,
     )
-
-    if game.get("seatmap_url"):
-        st.link_button(
-            "🗺️ Open Official Seat Map",
-            game["seatmap_url"],
-            use_container_width=True,
-        )
 
     if TOP_PICKS_ENABLED:
         live_picks, live_picks_error = load_top_picks(
