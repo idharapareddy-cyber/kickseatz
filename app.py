@@ -4133,6 +4133,489 @@ def clear_app_cache_and_rerun():
 
 
 # ============================================================
+# KICKSEATZ PROFILE / PERSISTENT PREFERENCES
+# ============================================================
+
+NFL_PROFILE_TEAMS = [
+    "Arizona Cardinals",
+    "Atlanta Falcons",
+    "Baltimore Ravens",
+    "Buffalo Bills",
+    "Carolina Panthers",
+    "Chicago Bears",
+    "Cincinnati Bengals",
+    "Cleveland Browns",
+    "Dallas Cowboys",
+    "Denver Broncos",
+    "Detroit Lions",
+    "Green Bay Packers",
+    "Houston Texans",
+    "Indianapolis Colts",
+    "Jacksonville Jaguars",
+    "Kansas City Chiefs",
+    "Las Vegas Raiders",
+    "Los Angeles Chargers",
+    "Los Angeles Rams",
+    "Miami Dolphins",
+    "Minnesota Vikings",
+    "New England Patriots",
+    "New Orleans Saints",
+    "New York Giants",
+    "New York Jets",
+    "Philadelphia Eagles",
+    "Pittsburgh Steelers",
+    "San Francisco 49ers",
+    "Seattle Seahawks",
+    "Tampa Bay Buccaneers",
+    "Tennessee Titans",
+    "Washington Commanders",
+]
+
+PROFILE_DEFAULTS = {
+    "favorite_team": "Atlanta Falcons",
+    "favorite_opponents": [],
+    "location": "",
+    "travel_radius": 50,
+    "home_away": "Either",
+    "seat_area": "No preference",
+    "typical_budget": 100.0,
+    "ticket_count": 2,
+    "fan_type": "Casual / social fan",
+    "experience": "No strong preference",
+    "priority": "Best Overall Value",
+}
+
+
+def get_profile_identity():
+    """
+    Return a stable identity when Streamlit authentication is configured.
+
+    Guests intentionally use session state only. This avoids treating a
+    shared SQLite database as a secure customer account system before the
+    production website has a real authentication/database layer.
+    """
+    try:
+        user = st.user
+        if getattr(user, "is_logged_in", False):
+            for attribute in ("sub", "email", "username", "name"):
+                value = getattr(user, attribute, None)
+                if value:
+                    return f"user:{str(value).strip().lower()}"
+    except Exception:
+        pass
+
+    return None
+
+
+def profile_auth_configured():
+    try:
+        auth_config = st.secrets.get("auth", None)
+        return bool(auth_config)
+    except Exception:
+        return False
+
+
+def init_profile_store():
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_preferences (
+                profile_id TEXT PRIMARY KEY,
+                favorite_team TEXT,
+                favorite_opponents TEXT,
+                location TEXT,
+                travel_radius INTEGER,
+                home_away TEXT,
+                seat_area TEXT,
+                typical_budget REAL,
+                ticket_count INTEGER,
+                fan_type TEXT,
+                experience TEXT,
+                priority TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_saved_profile():
+    if "kz_profile_preferences" in st.session_state:
+        return dict(st.session_state["kz_profile_preferences"])
+
+    profile_id = get_profile_identity()
+    if not profile_id:
+        return dict(PROFILE_DEFAULTS)
+
+    init_profile_store()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                favorite_team,
+                favorite_opponents,
+                location,
+                travel_radius,
+                home_away,
+                seat_area,
+                typical_budget,
+                ticket_count,
+                fan_type,
+                experience,
+                priority
+            FROM user_preferences
+            WHERE profile_id = ?
+            """,
+            (profile_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    preferences = dict(PROFILE_DEFAULTS)
+
+    if row:
+        try:
+            preferences.update(
+                {
+                    "favorite_team": row[0] or PROFILE_DEFAULTS["favorite_team"],
+                    "favorite_opponents": json.loads(row[1] or "[]"),
+                    "location": row[2] or "",
+                    "travel_radius": int(row[3] or 50),
+                    "home_away": row[4] or "Either",
+                    "seat_area": row[5] or "No preference",
+                    "typical_budget": float(row[6] or 100),
+                    "ticket_count": int(row[7] or 2),
+                    "fan_type": row[8] or PROFILE_DEFAULTS["fan_type"],
+                    "experience": row[9] or PROFILE_DEFAULTS["experience"],
+                    "priority": row[10] or PROFILE_DEFAULTS["priority"],
+                }
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            preferences = dict(PROFILE_DEFAULTS)
+
+    st.session_state["kz_profile_preferences"] = dict(preferences)
+    return preferences
+
+
+def save_profile_preferences(preferences):
+    clean_preferences = dict(PROFILE_DEFAULTS)
+    clean_preferences.update(preferences)
+
+    favorite_opponents = [
+        str(team).strip()
+        for team in clean_preferences.get("favorite_opponents", [])
+        if str(team).strip()
+    ]
+    clean_preferences["favorite_opponents"] = favorite_opponents
+
+    st.session_state["kz_profile_preferences"] = dict(clean_preferences)
+
+    profile_id = get_profile_identity()
+    if not profile_id:
+        return False
+
+    init_profile_store()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            """
+            INSERT INTO user_preferences (
+                profile_id,
+                favorite_team,
+                favorite_opponents,
+                location,
+                travel_radius,
+                home_away,
+                seat_area,
+                typical_budget,
+                ticket_count,
+                fan_type,
+                experience,
+                priority,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(profile_id) DO UPDATE SET
+                favorite_team = excluded.favorite_team,
+                favorite_opponents = excluded.favorite_opponents,
+                location = excluded.location,
+                travel_radius = excluded.travel_radius,
+                home_away = excluded.home_away,
+                seat_area = excluded.seat_area,
+                typical_budget = excluded.typical_budget,
+                ticket_count = excluded.ticket_count,
+                fan_type = excluded.fan_type,
+                experience = excluded.experience,
+                priority = excluded.priority,
+                updated_at = excluded.updated_at
+            """,
+            (
+                profile_id,
+                clean_preferences["favorite_team"],
+                json.dumps(favorite_opponents),
+                clean_preferences["location"],
+                int(clean_preferences["travel_radius"]),
+                clean_preferences["home_away"],
+                clean_preferences["seat_area"],
+                float(clean_preferences["typical_budget"]),
+                int(clean_preferences["ticket_count"]),
+                clean_preferences["fan_type"],
+                clean_preferences["experience"],
+                clean_preferences["priority"],
+                datetime.now().isoformat(timespec="seconds"),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return True
+
+
+def render_platform_profile():
+    preferences = load_saved_profile()
+
+    st.markdown("## 👤 My KickSeatz Profile")
+    st.write(
+        "Save the preferences KickSeatz should remember when finding games and tickets for you."
+    )
+
+    profile_id = get_profile_identity()
+    if profile_id:
+        st.success("Your preferences are linked to your signed-in profile.")
+    elif profile_auth_configured():
+        st.info(
+            "You're using guest mode. Sign in to save your preferences across sessions."
+        )
+        if st.button("Sign in to save my profile", use_container_width=True, key="kz_profile_login"):
+            st.login()
+    else:
+        st.info(
+            "Guest mode: your preferences are saved for this browser session. "
+            "Full account persistence can be enabled when authentication is configured."
+        )
+
+    with st.form("kz_profile_form"):
+        st.markdown("### 🏈 Your NFL preferences")
+
+        left, right = st.columns(2)
+
+        with left:
+            favorite_team = st.selectbox(
+                "Favorite NFL team",
+                NFL_PROFILE_TEAMS,
+                index=(
+                    NFL_PROFILE_TEAMS.index(preferences["favorite_team"])
+                    if preferences.get("favorite_team") in NFL_PROFILE_TEAMS
+                    else 0
+                ),
+                key="kz_profile_favorite_team",
+            )
+
+            favorite_opponents = st.multiselect(
+                "Teams you'd especially like to see",
+                NFL_PROFILE_TEAMS,
+                default=[
+                    team
+                    for team in preferences.get("favorite_opponents", [])
+                    if team in NFL_PROFILE_TEAMS
+                ],
+                key="kz_profile_favorite_opponents",
+            )
+
+            location = st.text_input(
+                "Your city or ZIP code",
+                value=str(preferences.get("location", "")),
+                placeholder="Example: Atlanta or 30318",
+                help="Use a city or ZIP code. KickSeatz does not need your street address.",
+                key="kz_profile_location",
+            )
+
+            travel_radius = st.slider(
+                "How far are you willing to travel?",
+                min_value=0,
+                max_value=2500,
+                value=int(preferences.get("travel_radius", 50)),
+                step=25,
+                format="%d miles",
+                key="kz_profile_radius",
+            )
+
+        with right:
+            home_away = st.selectbox(
+                "Game preference",
+                ["Prefer home", "Either", "Prefer away"],
+                index=["Prefer home", "Either", "Prefer away"].index(
+                    preferences.get("home_away", "Either")
+                    if preferences.get("home_away", "Either") in ["Prefer home", "Either", "Prefer away"]
+                    else "Either"
+                ),
+                key="kz_profile_home_away",
+            )
+
+            seat_area = st.selectbox(
+                "Preferred seating area",
+                ["No preference", "Lower Bowl", "Upper Bowl", "Club / Premium"],
+                index=["No preference", "Lower Bowl", "Upper Bowl", "Club / Premium"].index(
+                    preferences.get("seat_area", "No preference")
+                    if preferences.get("seat_area", "No preference") in ["No preference", "Lower Bowl", "Upper Bowl", "Club / Premium"]
+                    else "No preference"
+                ),
+                key="kz_profile_area",
+            )
+
+            typical_budget = st.number_input(
+                "Typical ticket budget",
+                min_value=25.0,
+                max_value=2000.0,
+                value=float(preferences.get("typical_budget", 100.0)),
+                step=5.0,
+                key="kz_profile_budget",
+            )
+
+            ticket_count = st.selectbox(
+                "Typical number of tickets",
+                [1, 2, 3, 4],
+                index=max(0, min(3, int(preferences.get("ticket_count", 2)) - 1)),
+                key="kz_profile_count",
+            )
+
+            fan_type = st.selectbox(
+                "What type of fan are you?",
+                [
+                    "Die-hard fan",
+                    "Rivalry fan",
+                    "Big matchup / star-game fan",
+                    "Casual / social fan",
+                    "Road-trip fan",
+                ],
+                index=(
+                    [
+                        "Die-hard fan",
+                        "Rivalry fan",
+                        "Big matchup / star-game fan",
+                        "Casual / social fan",
+                        "Road-trip fan",
+                    ].index(preferences.get("fan_type"))
+                    if preferences.get("fan_type") in [
+                        "Die-hard fan",
+                        "Rivalry fan",
+                        "Big matchup / star-game fan",
+                        "Casual / social fan",
+                        "Road-trip fan",
+                    ]
+                    else 3
+                ),
+                key="kz_profile_fan_type",
+            )
+
+        experience = st.selectbox(
+            "What kind of experience do you usually want?",
+            [
+                "No strong preference",
+                "Rivalry atmosphere",
+                "Elite opponent / marquee matchup",
+                "Affordable / value-focused",
+                "Home-field experience",
+                "Unique travel experience",
+            ],
+            index=(
+                [
+                    "No strong preference",
+                    "Rivalry atmosphere",
+                    "Elite opponent / marquee matchup",
+                    "Affordable / value-focused",
+                    "Home-field experience",
+                    "Unique travel experience",
+                ].index(preferences.get("experience"))
+                if preferences.get("experience") in [
+                    "No strong preference",
+                    "Rivalry atmosphere",
+                    "Elite opponent / marquee matchup",
+                    "Affordable / value-focused",
+                    "Home-field experience",
+                    "Unique travel experience",
+                ]
+                else 0
+            ),
+            key="kz_profile_experience",
+        )
+
+        priority = st.selectbox(
+            "What should KickSeatz prioritize?",
+            [
+                "Best Overall Value",
+                "Lowest Price",
+                "Best Game",
+                "Best Seats",
+            ],
+            index=(
+                [
+                    "Best Overall Value",
+                    "Lowest Price",
+                    "Best Game",
+                    "Best Seats",
+                ].index(preferences.get("priority"))
+                if preferences.get("priority") in [
+                    "Best Overall Value",
+                    "Lowest Price",
+                    "Best Game",
+                    "Best Seats",
+                ]
+                else 0
+            ),
+            key="kz_profile_priority",
+        )
+
+        saved = st.form_submit_button(
+            "Save My Preferences",
+            use_container_width=True,
+            type="primary",
+        )
+
+    if saved:
+        saved_preferences = {
+            "favorite_team": favorite_team,
+            "favorite_opponents": favorite_opponents,
+            "location": location.strip(),
+            "travel_radius": travel_radius,
+            "home_away": home_away,
+            "seat_area": seat_area,
+            "typical_budget": typical_budget,
+            "ticket_count": ticket_count,
+            "fan_type": fan_type,
+            "experience": experience,
+            "priority": priority,
+        }
+        persistent = save_profile_preferences(saved_preferences)
+        if persistent:
+            st.success("✅ Preferences saved to your KickSeatz profile.")
+        else:
+            st.success("✅ Preferences saved for this session.")
+
+    saved_now = load_saved_profile()
+    if saved_now:
+        st.markdown("### Your saved setup")
+        profile_cols = st.columns(4)
+        with profile_cols[0]:
+            st.metric("Favorite Team", saved_now.get("favorite_team", "—"))
+        with profile_cols[1]:
+            st.metric("Travel Radius", f"{saved_now.get('travel_radius', 0)} mi")
+        with profile_cols[2]:
+            st.metric("Typical Budget", f"${float(saved_now.get('typical_budget', 0)):.0f}")
+        with profile_cols[3]:
+            st.metric("Tickets", int(saved_now.get("ticket_count", 0)))
+
+    st.caption(
+        "Profile fields are designed for personalization: favorite teams, approximate location, travel range, seating preferences, fan type, experience, budget, ticket quantity, and scoring priority."
+    )
+
+
+# ============================================================
 
 # ============================================================
 # KICKSEATZ PLATFORM NAVIGATION / MARKETPLACE SHELL
@@ -4274,6 +4757,7 @@ def render_platform_nav():
         ("🎯 Find My Game", "find_game"),
         ("🎟️ Find Tickets", "find_tickets"),
         ("🧾 My Tickets", "my_tickets"),
+        ("👤 Profile", "profile"),
     ]
     nav = st.columns(len(items))
 
@@ -4318,7 +4802,7 @@ def render_platform_home():
         (c1, "🎯", "Find My Game", "Answer a few questions and get games matched to your preferences.", "find_game"),
         (c2, "🎟️", "Find Tickets", "Choose a game, set your budget, and compare the strongest ticket options.", "find_tickets"),
         (c3, "🧾", "My Tickets", "Rate a ticket you bought or are considering, and manage your saved price watches.", "my_tickets"),
-        (c4, "🏟️", "Explore NFL", "Browse the NFL schedule and see venue details when you open a ticket.", "find_tickets"),
+        (c4, "👤", "My Profile", "Save your favorite team, location, travel range, seating preferences, and ticket budget.", "profile"),
     ]
 
     for card_index, (column, icon, title, description, target) in enumerate(cards, start=1):
@@ -4663,6 +5147,10 @@ if current_platform_page == "find_game":
 
 if current_platform_page == "my_tickets":
     render_platform_my_tickets()
+    st.stop()
+
+if current_platform_page == "profile":
+    render_platform_profile()
     st.stop()
 
 st.caption(
