@@ -4302,6 +4302,168 @@ def render_platform_nav():
             )
 
 
+
+
+def _profile_travel_preference(preferences=None):
+    """Convert a saved mileage radius into the Find My Game travel choice."""
+    preferences = preferences or {}
+    try:
+        radius = int(preferences.get("travel_radius", 50))
+    except (TypeError, ValueError):
+        radius = 50
+
+    if radius <= 0:
+        return "Home area"
+    if radius <= 500:
+        return "Up to 500 miles"
+    if radius <= 1000:
+        return "Up to 1,000 miles"
+    if radius <= 3000:
+        return "Anywhere in the U.S."
+    return "Anywhere, including international"
+
+
+def _profile_home_away_preference(preferences=None):
+    """Translate saved profile wording into the game matcher wording."""
+    value = str((preferences or {}).get("home_away", "Either"))
+    if value == "Prefer home":
+        return "Prefer home games"
+    if value == "Prefer away":
+        return "Prefer away games"
+    return "Either"
+
+
+def _profile_experience_preference(preferences=None):
+    """Choose the best matching Find My Game experience from the saved profile."""
+    preferences = preferences or {}
+    experience = str(preferences.get("experience", "No strong preference"))
+    direct_map = {
+        "Rivalry atmosphere": "Rivalry atmosphere",
+        "Elite opponent / marquee matchup": "Elite opponent / marquee matchup",
+        "Affordable / value-focused": "Affordable / value-focused",
+        "Home-field experience": "Home-field experience",
+        "Unique travel experience": "Unique travel experience",
+    }
+    if experience in direct_map:
+        return direct_map[experience]
+
+    fan_type = str(preferences.get("fan_type", "Casual / social fan"))
+    fan_map = {
+        "Die-hard fan": "Home-field experience",
+        "Rivalry fan": "Rivalry atmosphere",
+        "Big matchup / star-game fan": "Elite opponent / marquee matchup",
+        "Road-trip fan": "Unique travel experience",
+        "Casual / social fan": "Affordable / value-focused",
+    }
+    return fan_map.get(fan_type, "Elite opponent / marquee matchup")
+
+
+def _profile_state_hint(location):
+    """Return a normalized US state abbreviation when a city/ZIP profile gives one."""
+    text = str(location or "").strip().lower()
+    if not text:
+        return ""
+
+    state_map = {
+        "alabama": "al", "alaska": "ak", "arizona": "az", "arkansas": "ar",
+        "california": "ca", "colorado": "co", "connecticut": "ct", "delaware": "de",
+        "florida": "fl", "georgia": "ga", "hawaii": "hi", "idaho": "id",
+        "illinois": "il", "indiana": "in", "iowa": "ia", "kansas": "ks",
+        "kentucky": "ky", "louisiana": "la", "maine": "me", "maryland": "md",
+        "massachusetts": "ma", "michigan": "mi", "minnesota": "mn", "mississippi": "ms",
+        "missouri": "mo", "montana": "mt", "nebraska": "ne", "nevada": "nv",
+        "new hampshire": "nh", "new jersey": "nj", "new mexico": "nm",
+        "new york": "ny", "north carolina": "nc", "north dakota": "nd",
+        "ohio": "oh", "oklahoma": "ok", "oregon": "or", "pennsylvania": "pa",
+        "rhode island": "ri", "south carolina": "sc", "south dakota": "sd",
+        "tennessee": "tn", "texas": "tx", "utah": "ut", "vermont": "vt",
+        "virginia": "va", "washington": "wa", "west virginia": "wv",
+        "wisconsin": "wi", "wyoming": "wy", "district of columbia": "dc",
+    }
+    for state_name, abbreviation in state_map.items():
+        if state_name in text:
+            return abbreviation
+
+    import re as _re
+    matches = _re.findall(r"\b([a-z]{2})\b", text)
+    valid = set(state_map.values())
+    for token in matches:
+        if token in valid:
+            return token
+    return ""
+
+
+def _profile_location_affinity(game, location):
+    """Give a modest boost when a saved location shares the game's home state."""
+    state = _profile_state_hint(location)
+    if not state:
+        return 0
+
+    game_location = str(game.get("location") or "").lower()
+    venue_info = NFL_TEAM_VENUES.get(game.get("home_team"), {})
+    venue_location = str(venue_info.get("location") or "").lower()
+    combined = f"{game_location} {venue_location}"
+    import re as _re
+    states_in_game = set(_re.findall(r"\b([a-z]{2})\b", combined))
+    return 10 if state in states_in_game else 0
+
+
+def calculate_profile_game_bonus(game, preferences):
+    """Calculate an extra personalization signal from the saved profile."""
+    if not preferences:
+        return 0, []
+
+    bonus = 0
+    reasons = []
+    favorite_team = str(preferences.get("favorite_team") or "").strip()
+    favorite_opponents = set(preferences.get("favorite_opponents") or [])
+
+    if favorite_team and game.get("team") == favorite_team:
+        bonus += 12
+    opponent = game.get("opponent") or ""
+    if opponent in favorite_opponents:
+        bonus += 8
+        reasons.append("Matches one of your saved favorite opponents.")
+
+    location_bonus = _profile_location_affinity(game, preferences.get("location"))
+    if location_bonus:
+        bonus += location_bonus
+        reasons.append("The game's venue is in your saved home state.")
+
+    return min(30, bonus), reasons[:2]
+
+
+def calculate_profile_ticket_match(ticket, game, preferences):
+    """Score how closely an individual ticket matches saved profile preferences."""
+    if not preferences:
+        return 50
+
+    score = 50.0
+    favorite_team = preferences.get("favorite_team")
+    favorite_opponents = set(preferences.get("favorite_opponents") or [])
+
+    if favorite_team and game.get("team") == favorite_team:
+        score += 12
+    if game.get("opponent") in favorite_opponents:
+        score += 8
+
+    saved_area = str(preferences.get("seat_area") or "No preference")
+    if saved_area != "No preference":
+        ticket_area = get_seat_area(ticket.get("section"))
+        if saved_area == ticket_area:
+            score += 18
+        elif saved_area == "Club / Premium" and ticket_area == "Lower Bowl":
+            score += 6
+
+    saved_home_away = str(preferences.get("home_away") or "Either")
+    if saved_home_away == "Prefer home" and game.get("home_game"):
+        score += 6
+    elif saved_home_away == "Prefer away" and not game.get("home_game") and not game.get("neutral_site"):
+        score += 6
+
+    return round(max(0, min(100, score)))
+
+
 def _get_saved_favorite_team():
     saved = load_saved_profile()
     return (saved or {}).get("favorite_team") or ""
@@ -4425,7 +4587,11 @@ def _generic_game_match_score(game, favorite_team, favorite_opponents, home_away
     return max(0, min(100, round(score))), reasons
 
 def get_generic_nfl_game_recommendations(preferences):
-    favorite_team = preferences.get("team") or _get_saved_favorite_team()
+    saved_profile = load_saved_profile() or {}
+    profile = dict(saved_profile)
+    profile.update({key: value for key, value in (preferences or {}).items() if value not in (None, "")})
+
+    favorite_team = profile.get("team") or profile.get("favorite_team") or _get_saved_favorite_team()
     if favorite_team:
         games = get_team_schedule(favorite_team)
     else:
@@ -4452,19 +4618,26 @@ def get_generic_nfl_game_recommendations(preferences):
                 games.append(game)
             else:
                 games.append(dict(raw_game))
-    favorite_opponents = preferences.get("favorite_opponents") or []
-    home_away = preferences.get("home_away", "Either")
-    vibe = preferences.get("vibe", "Elite opponent / marquee matchup")
-    budget = preferences.get("budget", 200)
+    favorite_opponents = profile.get("favorite_opponents") or []
+    home_away = profile.get("home_away", _profile_home_away_preference(profile))
+    if home_away in {"Prefer home", "Prefer away"}:
+        home_away = _profile_home_away_preference(profile)
+    vibe = profile.get("vibe") or _profile_experience_preference(profile)
+    budget = float(profile.get("budget") or profile.get("typical_budget") or 200)
+    ticket_count = int(profile.get("ticket_count") or 1)
+    travel_preference = profile.get("travel") or _profile_travel_preference(profile)
     today = datetime.now().strftime("%Y-%m-%d")
     games = [g for g in games if not g.get("game_date") or str(g.get("game_date")) >= today]
     results = []
     for game in games:
         score, reasons = _generic_game_match_score(
             game, favorite_team, favorite_opponents, home_away, vibe,
-            preferences.get("travel", "Anywhere, including international"),
+            travel_preference,
         )
-        demos = _get_ticket_inventory_for_game(game.get("team"), game, budget=budget, ticket_count=1)
+        profile_bonus, profile_reasons = calculate_profile_game_bonus(game, profile)
+        score = min(100, score + profile_bonus)
+        reasons.extend(profile_reasons)
+        demos = _get_ticket_inventory_for_game(game.get("team"), game, budget=budget, ticket_count=ticket_count)
         if demos and vibe == "Affordable / value-focused":
             score = min(100, score + 8)
             reasons.append("Connected ticket inventory fits your current budget.")
@@ -4546,6 +4719,10 @@ def render_platform_find_game():
     saved_opponents = saved.get("favorite_opponents") or []
     st.markdown("## 🎯 Find My Game")
     st.write("Tell KickSeatz what you want and it will surface upcoming NFL games that fit your preferences.")
+    saved_profile = load_saved_profile() or {}
+    has_saved_profile = bool(saved_profile.get("favorite_team") or saved_profile.get("location") or saved_profile.get("seat_area") != "No preference")
+    if has_saved_profile:
+        st.info("✨ Using your saved KickSeatz Profile as the starting point. You can still override any preference below.")
     with st.form("kz_find_game_form_nfl"):
         left, right = st.columns(2)
         with left:
@@ -4553,11 +4730,17 @@ def render_platform_find_game():
             team_value = saved_team if saved_team in NFL_TEAM_NAMES else "All NFL"
             team = st.selectbox("Which team are you looking for?", team_options, index=team_options.index(team_value), key="kz_find_game_team")
             favorite_opponents = st.multiselect("Any favorite opponents?", NFL_TEAM_NAMES, default=[x for x in saved_opponents if x in NFL_TEAM_NAMES], key="kz_find_game_opponents")
-            home_away = st.selectbox("Where do you want to see the game?", ["Either", "Prefer home games", "Prefer away games"], index=0, key="kz_find_game_home_away")
+            home_away_options = ["Either", "Prefer home games", "Prefer away games"]
+            home_away_default = _profile_home_away_preference(saved_profile)
+            home_away = st.selectbox("Where do you want to see the game?", home_away_options, index=home_away_options.index(home_away_default), key="kz_find_game_home_away")
         with right:
-            travel = st.selectbox("How far are you willing to travel?", ["Home area", "Up to 500 miles", "Up to 1,000 miles", "Anywhere in the U.S.", "Anywhere, including international"], key="kz_find_game_travel")
-            vibe = st.selectbox("What kind of experience do you want?", ["Elite opponent / marquee matchup", "Rivalry atmosphere", "Affordable / value-focused", "Home-field experience", "Unique travel experience"], key="kz_find_game_vibe")
-            budget = st.number_input("Maximum ticket budget per ticket", min_value=25.0, max_value=5000.0, value=float(saved.get("typical_budget", 100.0) or 100.0), step=5.0, key="kz_find_game_budget")
+            travel_options = ["Home area", "Up to 500 miles", "Up to 1,000 miles", "Anywhere in the U.S.", "Anywhere, including international"]
+            travel_default = _profile_travel_preference(saved_profile)
+            travel = st.selectbox("How far are you willing to travel?", travel_options, index=travel_options.index(travel_default), key="kz_find_game_travel")
+            vibe_options = ["Elite opponent / marquee matchup", "Rivalry atmosphere", "Affordable / value-focused", "Home-field experience", "Unique travel experience"]
+            vibe_default = _profile_experience_preference(saved_profile)
+            vibe = st.selectbox("What kind of experience do you want?", vibe_options, index=vibe_options.index(vibe_default), key="kz_find_game_vibe")
+            budget = st.number_input("Maximum ticket budget per ticket", min_value=25.0, max_value=5000.0, value=float(saved_profile.get("typical_budget", 100.0) or 100.0), step=5.0, key="kz_find_game_budget")
         submitted = st.form_submit_button("Find My Games", use_container_width=True, type="primary")
     if submitted:
         st.session_state["kz_nfl_quiz_results"] = get_generic_nfl_game_recommendations({
@@ -4590,6 +4773,21 @@ def render_platform_find_tickets():
     default_team = saved_team if saved_team in NFL_TEAM_NAMES else "All NFL"
     st.markdown("## 🎟️ Find Tickets")
     st.write("Search the NFL by team or matchup, then compare synthetic demo listings while live ticketing access is pending.")
+    has_saved_profile = bool(
+        saved.get("favorite_team")
+        or saved.get("favorite_opponents")
+        or saved.get("location")
+        or saved.get("travel_radius") not in (None, 50)
+        or saved.get("home_away") not in (None, "Either")
+        or saved.get("seat_area") not in (None, "No preference")
+        or saved.get("typical_budget") not in (None, 100.0)
+        or saved.get("ticket_count") not in (None, 2)
+        or saved.get("fan_type") not in (None, "Casual / social fan")
+        or saved.get("experience") not in (None, "No strong preference")
+        or saved.get("priority") not in (None, "Best Overall Value")
+    )
+    if has_saved_profile:
+        st.info("✨ Your saved profile is pre-filling this search. Ticket matches also account for your saved team and seat preferences.")
     st.info("Demo Marketplace: ticket availability, seat locations, and prices are synthetic examples for the NFL-wide MVP. Ticketmaster Discovery may provide live event metadata, but seat-level offers are not connected yet.")
     left, right = st.columns(2)
     with left:
@@ -4612,14 +4810,17 @@ def render_platform_find_tickets():
     with b:
         ticket_count = st.selectbox("Tickets", [1,2,3,4], index=max(0,min(3,int(saved.get("ticket_count",2) or 2)-1)), key="kz_ticket_search_count")
     with c:
-        priority = st.selectbox("Prioritize", ["Best Overall Value", "Lowest Price", "Best Seats"], key="kz_ticket_search_priority")
+        priority_options = ["Best Overall Value", "Lowest Price", "Best Seats"]
+        priority_default = saved.get("priority", "Best Overall Value")
+        if priority_default not in priority_options:
+            priority_default = "Best Overall Value"
+        priority = st.selectbox("Prioritize", priority_options, index=priority_options.index(priority_default), key="kz_ticket_search_priority")
     with d:
-        seat_area = st.selectbox(
-            "Seat area",
-            ["No preference", "Lower Bowl", "Upper Bowl"],
-            index=["No preference", "Lower Bowl", "Upper Bowl"].index(saved.get("seat_area", "No preference")) if saved.get("seat_area", "No preference") in {"No preference", "Lower Bowl", "Upper Bowl"} else 0,
-            key="kz_ticket_search_area",
-        )
+        seat_options = ["No preference", "Lower Bowl", "Upper Bowl", "Club / Premium"]
+        saved_area = saved.get("seat_area", "No preference")
+        if saved_area not in seat_options:
+            saved_area = "No preference"
+        seat_area = st.selectbox("Seat area", seat_options, index=seat_options.index(saved_area), key="kz_ticket_search_area")
 
     if not selected_game:
         st.info("No schedule entry is available for this team yet.")
@@ -4654,10 +4855,12 @@ def render_platform_find_tickets():
     scored = []
     for ticket_item in matches:
         try:
-            score = calculate_ticket_score(ticket_item, selected_game, budget, ticket_count, priority)
+            base_score = calculate_ticket_score(ticket_item, selected_game, budget, ticket_count, priority)
         except Exception:
-            score = 0
-        scored.append({"ticket": ticket_item, "game": selected_game, "score": score})
+            base_score = 0
+        profile_match = calculate_profile_ticket_match(ticket_item, selected_game, saved)
+        score = round((base_score * 0.80) + (profile_match * 0.20)) if saved else base_score
+        scored.append({"ticket": ticket_item, "game": selected_game, "score": score, "profile_match": profile_match})
     if priority == "Lowest Price":
         scored.sort(key=lambda x: (float(x["ticket"].get("price",0)), -x["score"]))
     elif priority == "Best Seats":
@@ -4674,6 +4877,8 @@ def render_platform_find_tickets():
                 st.caption(f"{int(t.get('available_quantity',0))} ticket(s) available • {t.get('source') or 'KickSeatz inventory'}")
             with m:
                 st.metric("KickSeatz Score", f"{item['score']}/100")
+                if saved:
+                    st.caption(f"Profile Match: {item.get('profile_match', 50)}/100")
             with r:
                 if st.button("Select", key=f"kz_ticket_select_{team}_{selected_game.get('game_id')}_{t.get('id')}", use_container_width=True):
                     st.session_state["kz_selected_ticket_id"] = t.get("id")
