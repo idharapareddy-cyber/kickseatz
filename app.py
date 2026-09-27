@@ -2613,6 +2613,7 @@ def get_reasons(
 def rate_ticket(
     ticket,
     game,
+    purchased=False,
 ):
 
     game_score = calculate_game_score(
@@ -2635,15 +2636,20 @@ def rate_ticket(
         * 10
     )
 
-    availability_score = min(
-        100,
-        int(
-            ticket.get(
-                "available_quantity",
-                0,
-            )
-        ) * 25,
-    )
+    if purchased:
+        # A ticket the user already owns should not be penalized because
+        # it is no longer available for purchase.
+        availability_score = 100
+    else:
+        availability_score = min(
+            100,
+            int(
+                ticket.get(
+                    "available_quantity",
+                    0,
+                )
+            ) * 25,
+        )
 
     score = round(
         game_score * 0.40
@@ -2826,6 +2832,352 @@ def get_game_selector_options():
 
     games.sort(key=lambda game: normalize_week(game.get("week")) or 999)
     return games
+
+
+
+# ============================================================
+# PERSONALIZED GAME FINDER
+# ============================================================
+
+# Broad planning-distance estimates from Atlanta. These are deliberately
+# approximate preference bands, not navigation or routing estimates.
+GAME_TRAVEL_MILES_FROM_ATLANTA = {
+    "Pittsburgh Steelers": 690,
+    "Carolina Panthers": 245,
+    "Green Bay Packers": 820,
+    "New Orleans Saints": 470,
+    "Baltimore Ravens": 700,
+    "Chicago Bears": 715,
+    "San Francisco 49ers": 2470,
+    "Tampa Bay Buccaneers": 460,
+    "Cincinnati Bengals": 4600,
+    "Kansas City Chiefs": 800,
+    "Minnesota Vikings": 900,
+    "Detroit Lions": 730,
+    "Cleveland Browns": 700,
+    "Washington Commanders": 650,
+}
+
+
+def get_game_price_stats(week):
+    prices = [
+        float(t.get("price", 0))
+        for t in inventory
+        if normalize_week(t.get("week")) == normalize_week(week)
+        and int(t.get("available_quantity", 0)) > 0
+        and float(t.get("price", 0)) > 0
+    ]
+
+    if not prices:
+        return None
+
+    return {
+        "lowest": min(prices),
+        "median": statistics.median(prices),
+        "highest": max(prices),
+        "sample_size": len(prices),
+    }
+
+
+def get_game_area_availability(week, preferred_area):
+    if preferred_area == "No preference":
+        return 100
+
+    matches = 0
+
+    for ticket in inventory:
+        if normalize_week(ticket.get("week")) != normalize_week(week):
+            continue
+        if int(ticket.get("available_quantity", 0)) <= 0:
+            continue
+
+        section = str(ticket.get("section", ""))
+        section_upper = section.upper()
+        section_number = get_section_number(section)
+
+        if preferred_area == "Club / Premium":
+            is_match = (
+                "C" in section_upper
+                or "LFT" in section_upper
+                or "CLUB" in section_upper
+            )
+        elif preferred_area == "Lower Bowl":
+            is_match = (
+                section_number is not None
+                and 101 <= section_number <= 134
+                and "C" not in section_upper
+            )
+        elif preferred_area == "Upper Bowl":
+            is_match = (
+                section_number is not None
+                and section_number >= 200
+            )
+        else:
+            is_match = False
+
+        if is_match:
+            matches += 1
+
+    if matches:
+        return 100
+
+    # Away games currently have schedule-level data only. Do not claim a
+    # seat-area preference is unavailable until live seat data exists.
+    return 60
+
+
+def calculate_travel_fit(game, travel_preference):
+    opponent = str(game.get("opponent", ""))
+
+    if game.get("international_game"):
+        miles = GAME_TRAVEL_MILES_FROM_ATLANTA.get(opponent, 4600)
+    elif game.get("home_game"):
+        miles = 0
+    else:
+        miles = GAME_TRAVEL_MILES_FROM_ATLANTA.get(opponent, 1200)
+
+    limits = {
+        "Atlanta only": 0,
+        "Up to 500 miles": 500,
+        "Up to 1,000 miles": 1000,
+        "Anywhere in the U.S.": 3000,
+        "Anywhere, including international": 10000,
+    }
+
+    limit = limits[travel_preference]
+
+    if miles <= limit:
+        return 100
+
+    if limit == 0:
+        return 0
+
+    excess_ratio = (miles - limit) / max(miles, 1)
+    return round(max(0, 100 - excess_ratio * 100))
+
+
+def calculate_fan_type_fit(game, fan_type):
+    opponent = game.get("opponent", "")
+    home = bool(game.get("home_game"))
+    rival = opponent in DIVISION_RIVALS
+    quality = calculate_game_score(game)
+
+    if fan_type == "Die-hard Falcons fan":
+        return 100 if home else 65
+
+    if fan_type == "Rivalry fan":
+        return 100 if rival else 45
+
+    if fan_type == "Big matchup / star-game fan":
+        return quality
+
+    if fan_type == "Casual / social fan":
+        return 95 if home and quality >= 70 else 70
+
+    if fan_type == "Road-trip fan":
+        return 100 if not home else 45
+
+    return 60
+
+
+def calculate_vibe_fit(game, vibe):
+    opponent = game.get("opponent", "")
+    quality = calculate_game_score(game)
+
+    if vibe == "Rivalry atmosphere":
+        return 100 if opponent in DIVISION_RIVALS else 45
+
+    if vibe == "Elite opponent / marquee matchup":
+        return quality
+
+    if vibe == "Affordable / value-focused":
+        stats = get_game_price_stats(game.get("week"))
+        if not stats:
+            return 60
+        return round(max(0, min(100, 115 - stats["median"] * 0.65)))
+
+    if vibe == "Home-field experience":
+        return 100 if game.get("home_game") else 40
+
+    if vibe == "Unique travel experience":
+        return 100 if game.get("international_game") else (90 if not game.get("home_game") else 40)
+
+    return 65
+
+
+def calculate_budget_fit(game, budget_band):
+    limits = {
+        "Under $75/ticket": 75,
+        "$75–$125/ticket": 125,
+        "$125–$200/ticket": 200,
+        "$200+/ticket": 9999,
+    }
+
+    limit = limits[budget_band]
+    stats = get_game_price_stats(game.get("week"))
+
+    if not stats:
+        return 60
+
+    if stats["lowest"] <= limit and stats["median"] <= limit:
+        return 100
+
+    if stats["lowest"] <= limit:
+        return 75
+
+    distance = (stats["lowest"] - limit) / max(stats["lowest"], 1)
+    return round(max(10, 100 - distance * 100))
+
+
+def calculate_home_away_fit(game, preference):
+    home = bool(game.get("home_game"))
+
+    if preference == "Prefer home games":
+        return 100 if home else 35
+
+    if preference == "Either home or away":
+        return 90
+
+    if preference == "Prefer away games":
+        return 100 if not home else 40
+
+    return 70
+
+
+def score_personalized_game(game, preferences):
+    components = {
+        "fan": calculate_fan_type_fit(game, preferences["fan_type"]),
+        "travel": calculate_travel_fit(game, preferences["travel"]),
+        "vibe": calculate_vibe_fit(game, preferences["vibe"]),
+        "budget": calculate_budget_fit(game, preferences["budget"]),
+        "area": get_game_area_availability(game.get("week"), preferences["area"]),
+        "home_away": calculate_home_away_fit(game, preferences["home_away"]),
+    }
+
+    score = (
+        components["fan"] * 0.25
+        + components["travel"] * 0.20
+        + components["vibe"] * 0.20
+        + components["budget"] * 0.15
+        + components["area"] * 0.10
+        + components["home_away"] * 0.10
+    )
+
+    return round(score), components
+
+
+def get_personalized_game_reasons(game, preferences, components):
+    reasons = []
+    opponent = game.get("opponent", "this opponent")
+
+    if components["fan"] >= 80:
+        if preferences["fan_type"] == "Rivalry fan":
+            reasons.append(f"The {opponent} matchup fits your rivalry-focused fan profile.")
+        elif preferences["fan_type"] == "Road-trip fan":
+            reasons.append("This game fits your road-trip preference.")
+        elif preferences["fan_type"] == "Die-hard Falcons fan":
+            reasons.append("This is a Falcons home game, matching your team-first preference.")
+        elif preferences["fan_type"] == "Big matchup / star-game fan":
+            reasons.append("The opponent gives this game strong matchup appeal.")
+        else:
+            reasons.append("The matchup fits the fan profile you selected.")
+
+    if components["travel"] >= 80:
+        reasons.append("The travel distance fits the range you selected.")
+
+    if components["vibe"] >= 80:
+        reasons.append(f"It matches your preferred game vibe: {preferences['vibe']}.")
+
+    if components["budget"] >= 80:
+        if get_game_price_stats(game.get("week")):
+            reasons.append("The demo ticket pricing fits your selected budget range.")
+        else:
+            reasons.append("The game is being considered without live seat-level price data yet.")
+
+    return reasons[:3] or [
+        "This game produced the strongest overall match across your selected preferences."
+    ]
+
+
+def get_personalized_game_recommendations(preferences):
+    results = []
+
+    for game in FULL_FALCONS_2026_SCHEDULE:
+        if game.get("bye"):
+            continue
+
+        score, components = score_personalized_game(game, preferences)
+
+        results.append({
+            "game": game,
+            "score": score,
+            "components": components,
+            "reasons": get_personalized_game_reasons(
+                game,
+                preferences,
+                components,
+            ),
+        })
+
+    results.sort(
+        key=lambda item: (
+            item["score"],
+            calculate_game_score(item["game"]),
+        ),
+        reverse=True,
+    )
+
+    return results
+
+
+def select_interactive_ticket_options(candidates, limit=4):
+    """
+    Select a small set of ticket listings for the interactive comparison area.
+
+    When the user is looking at all games, prioritize different games so the
+    four visible options represent the broader home-game inventory instead of
+    four nearly identical listings from one matchup. When a specific game is
+    selected, the function naturally returns multiple tickets from that game.
+    """
+    if not candidates:
+        return []
+
+    selected = [candidates[0]]
+    seen_weeks = {
+        normalize_week(candidates[0]["ticket"].get("week"))
+    }
+
+    # First pass: one strong ticket from each different game.
+    for candidate in candidates[1:]:
+        if len(selected) >= limit:
+            break
+
+        week = normalize_week(
+            candidate["ticket"].get("week")
+        )
+
+        if week not in seen_weeks:
+            selected.append(candidate)
+            seen_weeks.add(week)
+
+    # Second pass: fill any remaining slots with the next best listings.
+    if len(selected) < limit:
+        selected_ids = {
+            candidate["ticket"].get("id")
+            for candidate in selected
+        }
+
+        for candidate in candidates:
+            if len(selected) >= limit:
+                break
+
+            candidate_id = candidate["ticket"].get("id")
+
+            if candidate_id not in selected_ids:
+                selected.append(candidate)
+                selected_ids.add(candidate_id)
+
+    return selected[:limit]
 
 
 def get_price_benchmark(ticket):
@@ -3444,6 +3796,158 @@ if away_visual_games:
 
 
 # ============================================================
+# PERSONALIZED GAME QUIZ
+# ============================================================
+
+with st.expander("🎯 Find My Ideal Game", expanded=False):
+    st.write(
+        "Answer a few questions and KickSeatz will match you with the game "
+        "that best fits your fan profile, travel, budget, seat area, and game vibe."
+    )
+
+    q1, q2 = st.columns(2)
+
+    with q1:
+        quiz_fan_type = st.selectbox(
+            "What type of fan are you?",
+            [
+                "Die-hard Falcons fan",
+                "Rivalry fan",
+                "Big matchup / star-game fan",
+                "Casual / social fan",
+                "Road-trip fan",
+            ],
+            key="quiz_fan_type",
+        )
+
+        quiz_travel = st.selectbox(
+            "How far are you willing to travel?",
+            [
+                "Atlanta only",
+                "Up to 500 miles",
+                "Up to 1,000 miles",
+                "Anywhere in the U.S.",
+                "Anywhere, including international",
+            ],
+            key="quiz_travel",
+        )
+
+        quiz_area = st.selectbox(
+            "What seat area do you prefer?",
+            [
+                "No preference",
+                "Lower Bowl",
+                "Upper Bowl",
+                "Club / Premium",
+            ],
+            key="quiz_area",
+        )
+
+    with q2:
+        quiz_vibe = st.selectbox(
+            "What kind of game experience do you want?",
+            [
+                "Rivalry atmosphere",
+                "Elite opponent / marquee matchup",
+                "Affordable / value-focused",
+                "Home-field experience",
+                "Unique travel experience",
+            ],
+            key="quiz_vibe",
+        )
+
+        quiz_budget = st.selectbox(
+            "What's your ticket budget?",
+            [
+                "Under $75/ticket",
+                "$75–$125/ticket",
+                "$125–$200/ticket",
+                "$200+/ticket",
+            ],
+            key="quiz_budget",
+        )
+
+        quiz_home_away = st.selectbox(
+            "Home or away?",
+            [
+                "Prefer home games",
+                "Either home or away",
+                "Prefer away games",
+            ],
+            key="quiz_home_away",
+        )
+
+    quiz_preferences = {
+        "fan_type": quiz_fan_type,
+        "travel": quiz_travel,
+        "area": quiz_area,
+        "vibe": quiz_vibe,
+        "budget": quiz_budget,
+        "home_away": quiz_home_away,
+    }
+
+    personalized_results = get_personalized_game_recommendations(
+        quiz_preferences
+    )
+
+    if personalized_results:
+        ideal = personalized_results[0]
+        ideal_game = ideal["game"]
+        ideal_week = ideal_game.get("week")
+        matchup_word = (
+            "vs"
+            if ideal_game.get("home_game") or ideal_game.get("international_game")
+            else "at"
+        )
+
+        st.success(
+            f"🎯 Your Ideal Game: Week {ideal_week} • "
+            f"Falcons {matchup_word} {ideal_game.get('opponent')} • "
+            f"{ideal_game.get('venue', 'Venue TBD')}"
+        )
+
+        result_left, result_right = st.columns([3, 1])
+
+        with result_left:
+            for reason in ideal["reasons"]:
+                st.write(f"• {reason}")
+
+            st.caption(
+                f"{ideal_game.get('game_date') or 'Date TBD'} • "
+                f"{ideal_game.get('location', 'Location TBD')}"
+            )
+
+        with result_right:
+            st.metric("Preference Match", f"{ideal['score']}/100")
+
+        if st.button(
+            "Use this game in Ticket Finder",
+            key="apply_personalized_game",
+            use_container_width=True,
+        ):
+            st.session_state["quiz_game_week"] = ideal_week
+            st.rerun()
+
+        with st.expander("See your next 2 matches"):
+            for result in personalized_results[1:3]:
+                game = result["game"]
+                matchup_word = (
+                    "vs"
+                    if game.get("home_game") or game.get("international_game")
+                    else "at"
+                )
+                st.write(
+                    f"**{result['score']}/100** • Week {game.get('week')} • "
+                    f"Falcons {matchup_word} {game.get('opponent')}"
+                )
+
+        st.caption(
+            "The quiz is a preference-matching tool, not a game-outcome prediction. "
+            "Away games currently have schedule-level data rather than live seat inventory."
+        )
+
+
+# ============================================================
 # SIDEBAR
 # ============================================================
 
@@ -3542,10 +4046,21 @@ game_selector_labels = ["All 2026 Falcons Games"] + [
     for g in selector_games
 ]
 
+quiz_week = st.session_state.get("quiz_game_week")
+quiz_default_index = 0
+if quiz_week is not None:
+    for selector_index, selector_game in enumerate(
+        selector_games,
+        start=1,
+    ):
+        if normalize_week(selector_game.get("week")) == normalize_week(quiz_week):
+            quiz_default_index = selector_index
+            break
+
 selected_game_label = st.sidebar.selectbox(
     "Game",
     game_selector_labels,
-    index=0,
+    index=quiz_default_index,
 )
 
 selected_week = None
@@ -3810,6 +4325,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+st.caption("Primary recommendation first. Open **🔎 Explain this ticket** for the deeper analysis.")
+
 left, right = st.columns([3, 1])
 
 with left:
@@ -4048,41 +4565,6 @@ with right:
     )
 
 # ============================================================
-# BUDGET FIT
-# ============================================================
-
-budget_used = min(
-    ticket["price"] / budget,
-    1.0,
-)
-
-st.markdown(
-    '<div class="budget-box">',
-    unsafe_allow_html=True,
-)
-
-st.write(
-    f"**Budget usage:** "
-    f"${ticket['price']:.0f} of "
-    f"${budget:.0f} per ticket"
-)
-
-st.progress(
-    budget_used
-)
-
-st.caption(
-    f"${budget - ticket['price']:.0f} of your "
-    f"per-ticket budget remains."
-)
-
-st.markdown(
-    "</div>",
-    unsafe_allow_html=True,
-)
-
-
-# ============================================================
 # PRICE WATCH
 # ============================================================
 
@@ -4169,683 +4651,731 @@ else:
     )
 
 # ============================================================
-# HISTORICAL PRICE TIMING
-# ============================================================
-
-timing = get_price_timing_snapshot(ticket)
-
-pt1, pt2 = st.columns(2)
-
-with pt1:
-    st.markdown(
-        f"**{timing['label']}**"
-    )
-
-with pt2:
-    if timing["low"] is not None:
-        st.caption(
-            f"Observed historical low: ${timing['low']:.0f}"
-        )
-
-st.caption(
-    timing["detail"]
-)
-
-st.caption(
-    "Historical signal only — it describes recorded prices and does not predict future prices."
-)
 
 # ============================================================
-# HISTORICAL TIMING SIGNAL
+# DEEP DIVE / EXPLANATIONS
 # ============================================================
 
-timing_advice = get_price_timing_advice(ticket)
-
-st.markdown(
-    '<div class="section-title">🧭 Historical Timing Signal</div>',
-    unsafe_allow_html=True,
-)
-
-if timing_advice["tone"] == "success":
-    st.success(f"{timing_advice['headline']} — {timing_advice['detail']}")
-elif timing_advice["tone"] == "warning":
-    st.warning(f"{timing_advice['headline']} — {timing_advice['detail']}")
-else:
-    st.info(f"{timing_advice['headline']} — {timing_advice['detail']}")
-
-st.caption(
-    "This is a descriptive historical signal based only on recorded KickSeatz snapshots; it is not a buy/sell prediction."
-)
-
-# ============================================================
-# OPPORTUNITY ENGINE
-# ============================================================
-
-recommendation_opportunity = recommendation.get("opportunity", {})
-opportunity_candidates = sorted(
-    candidates,
-    key=lambda item: item.get("opportunity", {}).get("score", 0),
-    reverse=True,
-)
-best_opportunity = opportunity_candidates[0] if opportunity_candidates else recommendation
-best_opp = best_opportunity.get("opportunity", {})
-
-st.markdown(
-    '<div class="section-title">🔥 Opportunity Engine</div>',
-    unsafe_allow_html=True,
-)
-
-st.caption(
-    "KickSeatz looks for value that a simple cheapest-ticket search can miss. "
-    "This signal compares the actual eligible market, seat value, budget efficiency, "
-    "observed price history, and current inventory. It is descriptive, not a prediction."
-)
-
-opp_col1, opp_col2, opp_col3, opp_col4 = st.columns(4)
-
-with opp_col1:
-    st.metric(
-        "Opportunity Score",
-        f"{best_opp.get('score', 0)}/100",
-    )
-    st.caption(best_opp.get("label", "Market Value"))
-
-with opp_col2:
-    st.metric(
-        "Same-Game Median",
-        f"${best_opp.get('same_game_median', float(best_opportunity['ticket']['price'])):.0f}",
-    )
+with st.popover("🔎 Explain this ticket", width="stretch"):
     st.caption(
-        f"Selected: ${float(best_opportunity['ticket']['price']):.0f}/ticket"
+        "Want the details? Open this to see how KickSeatz evaluated the recommendation, "
+        "including scoring, price benchmarks, historical signals, budget trade-offs, "
+        "opportunity analysis, and price history."
     )
 
-with opp_col3:
-    st.metric(
-        "Seat Value",
-        f"{best_opp.get('seat_value_score', 0)}/100",
-    )
-    st.caption("Relative seat quality per dollar")
+    # BUDGET FIT
+    # ============================================================
 
-with opp_col4:
-    st.metric(
-        "History Signal",
-        f"{best_opp.get('history_score', 0)}/100",
-    )
-    st.caption(
-        f"{best_opp.get('history', {}).get('sample_size', 0)} recorded observations"
+    budget_used = min(
+        ticket["price"] / budget,
+        1.0,
     )
 
-opp_ticket = best_opportunity["ticket"]
-opp_game = best_opportunity["game"]
-
-if best_opportunity["ticket"]["id"] != ticket["id"]:
-    st.info(
-        f"**Hidden opportunity:** Falcons vs {opp_game.get('opponent', 'Unknown')} "
-        f"— Section {opp_ticket.get('section')} • Row {opp_ticket.get('row')} "
-        f"— ${float(opp_ticket.get('price', 0)):.0f}/ticket. "
-        f"{best_opp.get('reason', '')}"
-    )
-else:
-    st.success(
-        f"**Your recommendation is also the strongest opportunity.** "
-        f"{best_opp.get('reason', '')}"
-    )
-
-upgrade = get_opportunity_upgrade(recommendation, candidates)
-if upgrade:
-    upgrade_ticket = upgrade["candidate"]["ticket"]
-    upgrade_game = upgrade["candidate"]["game"]
-    st.markdown("**What would your next dollars actually buy?**")
-    u1, u2, u3 = st.columns(3)
-    with u1:
-        st.metric(
-            "Extra Cost",
-            f"+${upgrade['extra_cost']:.0f}/ticket",
-        )
-    with u2:
-        st.metric(
-            "Seat Quality Gain",
-            f"+{upgrade['seat_gain']} points",
-        )
-    with u3:
-        st.caption(
-            f"Upgrade: Falcons vs {upgrade_game.get('opponent', 'Unknown')} "
-            f"• Sec {upgrade_ticket.get('section')} • Row {upgrade_ticket.get('row')} "
-            f"• ${float(upgrade_ticket.get('price', 0)):.0f}"
-        )
-
-with st.expander("How KickSeatz found this opportunity"):
-    st.write(
-        f"**Relative price:** {best_opp.get('relative_price_score', 0)}/100 — "
-        "compared with the actual eligible tickets for the matchup."
-    )
-    st.write(
-        f"**Seat value:** {best_opp.get('seat_value_score', 0)}/100 — "
-        "seat quality relative to ticket price across eligible inventory."
-    )
-    st.write(
-        f"**Budget efficiency:** {best_opp.get('budget_efficiency_score', 0)}/100 — "
-        "how efficiently the ticket uses the selected per-ticket budget."
-    )
-    st.write(
-        f"**Historical signal:** {best_opp.get('history_score', 0)}/100 — "
-        "based only on recorded prices for this ticket."
-    )
-    st.write(
-        f"**Availability signal:** {best_opp.get('scarcity_score', 0)}/100 — "
-        "based on current inventory available for the requested quantity."
-    )
-
-# ============================================================
-# PRICE BENCHMARK + BUDGET OPPORTUNITY
-# ============================================================
-
-benchmark = get_price_benchmark(ticket)
-if benchmark:
     st.markdown(
-        '<div class="section-title">📈 Price Benchmark</div>',
+        '<div class="budget-box">',
         unsafe_allow_html=True,
     )
 
-    pb1, pb2, pb3, pb4 = st.columns(4)
-
-    with pb1:
-        st.metric("Same-game Median", f"${benchmark['median']:.0f}")
-
-    with pb2:
-        st.metric("Cheapest Available", f"${benchmark['cheapest']:.0f}")
-
-    with pb3:
-        delta_text = (
-            f"${abs(benchmark['difference']):.0f} below median"
-            if benchmark["difference"] < 0
-            else f"${benchmark['difference']:.0f} above median"
-            if benchmark["difference"] > 0
-            else "At median"
-        )
-        st.metric("Ticket Position", f"{benchmark['percentile']}%", delta_text)
-
-    with pb4:
-        st.metric("Comparable Tickets", benchmark["sample_size"])
-
-    st.caption(
-        "Benchmark uses KickSeatz's currently loaded inventory for the same matchup; "
-        "it is not a live market-wide average."
+    st.write(
+        f"**Budget usage:** "
+        f"${ticket['price']:.0f} of "
+        f"${budget:.0f} per ticket"
     )
 
-cheaper_option, upgrade_option = get_budget_insights(
-    candidates,
-    ticket,
-    budget,
-)
+    st.progress(
+        budget_used
+    )
 
-if cheaper_option or upgrade_option:
+    st.caption(
+        f"${budget - ticket['price']:.0f} of your "
+        f"per-ticket budget remains."
+    )
+
     st.markdown(
-        '<div class="section-title">💡 What Your Budget Can Change</div>',
+        "</div>",
         unsafe_allow_html=True,
     )
 
-    budget_cols = st.columns(2)
 
-    with budget_cols[0]:
-        if cheaper_option:
-            ct = cheaper_option["ticket"]
-            cg = cheaper_option["game"]
-            savings = float(ticket["price"]) - float(ct["price"])
-            st.success(
-                f"Save ${savings:.0f}/ticket with Falcons vs {cg['opponent']} "
-                f"at ${float(ct['price']):.0f}."
-            )
+    # ============================================================
+    # HISTORICAL PRICE TIMING
+    # ============================================================
+
+    timing = get_price_timing_snapshot(ticket)
+
+    pt1, pt2 = st.columns(2)
+
+    with pt1:
+        st.markdown(
+            f"**{timing['label']}**"
+        )
+
+    with pt2:
+        if timing["low"] is not None:
             st.caption(
-                f"Section {ct['section']} • Row {ct['row']} • "
-                f"Score {cheaper_option['score']}/100"
+                f"Observed historical low: ${timing['low']:.0f}"
+            )
+
+    st.caption(
+        timing["detail"]
+    )
+
+    st.caption(
+        "Historical signal only — it describes recorded prices and does not predict future prices."
+    )
+
+    # ============================================================
+    # HISTORICAL TIMING SIGNAL
+    # ============================================================
+
+    timing_advice = get_price_timing_advice(ticket)
+
+    st.markdown(
+        '<div class="section-title">🧭 Historical Timing Signal</div>',
+        unsafe_allow_html=True,
+    )
+
+    if timing_advice["tone"] == "success":
+        st.success(f"{timing_advice['headline']} — {timing_advice['detail']}")
+    elif timing_advice["tone"] == "warning":
+        st.warning(f"{timing_advice['headline']} — {timing_advice['detail']}")
+    else:
+        st.info(f"{timing_advice['headline']} — {timing_advice['detail']}")
+
+    st.caption(
+        "This is a descriptive historical signal based only on recorded KickSeatz snapshots; it is not a buy/sell prediction."
+    )
+
+    # ============================================================
+    # OPPORTUNITY ENGINE
+    # ============================================================
+
+    recommendation_opportunity = recommendation.get("opportunity", {})
+    opportunity_candidates = sorted(
+        candidates,
+        key=lambda item: item.get("opportunity", {}).get("score", 0),
+        reverse=True,
+    )
+    best_opportunity = opportunity_candidates[0] if opportunity_candidates else recommendation
+    best_opp = best_opportunity.get("opportunity", {})
+
+    st.markdown(
+        '<div class="section-title">🔥 Opportunity Engine</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.caption(
+        "KickSeatz looks for value that a simple cheapest-ticket search can miss. "
+        "This signal compares the actual eligible market, seat value, budget efficiency, "
+        "observed price history, and current inventory. It is descriptive, not a prediction."
+    )
+
+    opp_col1, opp_col2, opp_col3, opp_col4 = st.columns(4)
+
+    with opp_col1:
+        st.metric(
+            "Opportunity Score",
+            f"{best_opp.get('score', 0)}/100",
+        )
+        st.caption(best_opp.get("label", "Market Value"))
+
+    with opp_col2:
+        st.metric(
+            "Same-Game Median",
+            f"${best_opp.get('same_game_median', float(best_opportunity['ticket']['price'])):.0f}",
+        )
+        st.caption(
+            f"Selected: ${float(best_opportunity['ticket']['price']):.0f}/ticket"
+        )
+
+    with opp_col3:
+        st.metric(
+            "Seat Value",
+            f"{best_opp.get('seat_value_score', 0)}/100",
+        )
+        st.caption("Relative seat quality per dollar")
+
+    with opp_col4:
+        st.metric(
+            "History Signal",
+            f"{best_opp.get('history_score', 0)}/100",
+        )
+        st.caption(
+            f"{best_opp.get('history', {}).get('sample_size', 0)} recorded observations"
+        )
+
+    opp_ticket = best_opportunity["ticket"]
+    opp_game = best_opportunity["game"]
+
+    if best_opportunity["ticket"]["id"] != ticket["id"]:
+        st.info(
+            f"**Hidden opportunity:** Falcons vs {opp_game.get('opponent', 'Unknown')} "
+            f"— Section {opp_ticket.get('section')} • Row {opp_ticket.get('row')} "
+            f"— ${float(opp_ticket.get('price', 0)):.0f}/ticket. "
+            f"{best_opp.get('reason', '')}"
+        )
+    else:
+        st.success(
+            f"**Your recommendation is also the strongest opportunity.** "
+            f"{best_opp.get('reason', '')}"
+        )
+
+    upgrade = get_opportunity_upgrade(recommendation, candidates)
+    if upgrade:
+        upgrade_ticket = upgrade["candidate"]["ticket"]
+        upgrade_game = upgrade["candidate"]["game"]
+        st.markdown("**What would your next dollars actually buy?**")
+        u1, u2, u3 = st.columns(3)
+        with u1:
+            st.metric(
+                "Extra Cost",
+                f"+${upgrade['extra_cost']:.0f}/ticket",
+            )
+        with u2:
+            st.metric(
+                "Seat Quality Gain",
+                f"+{upgrade['seat_gain']} points",
+            )
+        with u3:
+            st.caption(
+                f"Upgrade: Falcons vs {upgrade_game.get('opponent', 'Unknown')} "
+                f"• Sec {upgrade_ticket.get('section')} • Row {upgrade_ticket.get('row')} "
+                f"• ${float(upgrade_ticket.get('price', 0)):.0f}"
+            )
+
+    with st.container(border=True):
+        st.write(
+            f"**Relative price:** {best_opp.get('relative_price_score', 0)}/100 — "
+            "compared with the actual eligible tickets for the matchup."
+        )
+        st.write(
+            f"**Seat value:** {best_opp.get('seat_value_score', 0)}/100 — "
+            "seat quality relative to ticket price across eligible inventory."
+        )
+        st.write(
+            f"**Budget efficiency:** {best_opp.get('budget_efficiency_score', 0)}/100 — "
+            "how efficiently the ticket uses the selected per-ticket budget."
+        )
+        st.write(
+            f"**Historical signal:** {best_opp.get('history_score', 0)}/100 — "
+            "based only on recorded prices for this ticket."
+        )
+        st.write(
+            f"**Availability signal:** {best_opp.get('scarcity_score', 0)}/100 — "
+            "based on current inventory available for the requested quantity."
+        )
+
+    # ============================================================
+    # PRICE BENCHMARK + BUDGET OPPORTUNITY
+    # ============================================================
+
+    benchmark = get_price_benchmark(ticket)
+    if benchmark:
+        st.markdown(
+            '<div class="section-title">📈 Price Benchmark</div>',
+            unsafe_allow_html=True,
+        )
+
+        pb1, pb2, pb3, pb4 = st.columns(4)
+
+        with pb1:
+            st.metric("Same-game Median", f"${benchmark['median']:.0f}")
+
+        with pb2:
+            st.metric("Cheapest Available", f"${benchmark['cheapest']:.0f}")
+
+        with pb3:
+            delta_text = (
+                f"${abs(benchmark['difference']):.0f} below median"
+                if benchmark["difference"] < 0
+                else f"${benchmark['difference']:.0f} above median"
+                if benchmark["difference"] > 0
+                else "At median"
+            )
+            st.metric("Ticket Position", f"{benchmark['percentile']}%", delta_text)
+
+        with pb4:
+            st.metric("Comparable Tickets", benchmark["sample_size"])
+
+        st.caption(
+            "Benchmark uses KickSeatz's currently loaded inventory for the same matchup; "
+            "it is not a live market-wide average."
+        )
+
+    cheaper_option, upgrade_option = get_budget_insights(
+        candidates,
+        ticket,
+        budget,
+    )
+
+    if cheaper_option or upgrade_option:
+        st.markdown(
+            '<div class="section-title">💡 What Your Budget Can Change</div>',
+            unsafe_allow_html=True,
+        )
+
+        budget_cols = st.columns(2)
+
+        with budget_cols[0]:
+            if cheaper_option:
+                ct = cheaper_option["ticket"]
+                cg = cheaper_option["game"]
+                savings = float(ticket["price"]) - float(ct["price"])
+                st.success(
+                    f"Save ${savings:.0f}/ticket with Falcons vs {cg['opponent']} "
+                    f"at ${float(ct['price']):.0f}."
+                )
+                st.caption(
+                    f"Section {ct['section']} • Row {ct['row']} • "
+                    f"Score {cheaper_option['score']}/100"
+                )
+            else:
+                st.info("No cheaper eligible ticket is available in the current inventory.")
+
+        with budget_cols[1]:
+            if upgrade_option:
+                ut = upgrade_option["ticket"]
+                ug = upgrade_option["game"]
+                extra = float(ut["price"]) - float(ticket["price"])
+                st.info(
+                    f"Spend ${extra:.0f} more/ticket for Falcons vs {ug['opponent']} "
+                    f"at ${float(ut['price']):.0f}."
+                )
+                st.caption(
+                    f"Section {ut['section']} • Row {ut['row']} • "
+                    f"Score {upgrade_option['score']}/100"
+                )
+            else:
+                st.info("No higher-priced eligible upgrade is available within your budget.")
+
+    # ============================================================
+    # WHY KICKSEATZ CHOSE IT
+    # ============================================================
+
+    st.markdown(
+        '<div class="section-title">'
+        '🧠 Why KickSeatz Chose This Ticket'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    reasons = get_reasons(
+        ticket,
+        game,
+        budget,
+        ticket_count,
+        priority,
+    )
+
+    st.markdown(
+        '<div class="reason-card">',
+        unsafe_allow_html=True,
+    )
+
+    for reason in reasons:
+        st.markdown(
+            f"• {reason}"
+        )
+
+    st.markdown(
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ============================================================
+    # BEST ALTERNATIVE
+    # ============================================================
+
+    if len(candidates) >= 2:
+        alternative = candidates[1]
+        at = alternative["ticket"]
+        ag = alternative["game"]
+
+        st.markdown(
+            '<div class="section-title">🔄 Best Alternative</div>',
+            unsafe_allow_html=True,
+        )
+
+        alt1, alt2, alt3 = st.columns(3)
+        with alt1:
+            st.metric("Alternative Score", f"{alternative['score']}/100")
+        with alt2:
+            st.metric("Price", f"${float(at['price']):.0f}/ticket")
+        with alt3:
+            score_gap = alternative["score"] - score
+            st.metric("Score Difference", f"{score_gap:+.0f}")
+
+        st.write(
+            f"Falcons vs **{ag['opponent']}** • Section **{at['section']}** • "
+            f"Row **{at['row']}** • {at['available_quantity']} available"
+        )
+        st.caption(
+            "This is the next option in the same recommendation model, not a separate opinion."
+        )
+
+    # ============================================================
+    # SCORE BREAKDOWN
+    # ============================================================
+
+    breakdown = {
+        "Game Quality":
+            calculate_game_score(game),
+
+        "Price":
+            calculate_price_score(
+                ticket["price"],
+                [
+                    float(t.get("price", 0))
+                    for t in inventory
+                    if normalize_week(t.get("week"))
+                    == normalize_week(ticket.get("week"))
+                    and int(t.get("available_quantity", 0)) > 0
+                ]
+            ),
+
+        "Seat Quality":
+            calculate_seat_quality(ticket) * 10,
+
+        "Availability":
+            calculate_availability(
+                ticket,
+                ticket_count,
+            ),
+
+        "Confidence":
+            confidence,
+    }
+
+    st.write("")
+
+    b1, b2, b3, b4, b5 = st.columns(5)
+
+    with b1:
+        st.metric(
+            "Game Quality",
+            f"{breakdown['Game Quality']}/100",
+        )
+
+        opponent = game.get(
+            "opponent",
+            ""
+        )
+
+        opponent_rank = OPPONENT_POWER_RANKINGS.get(
+            opponent,
+            32,
+        )
+
+        game_notes = []
+
+        game_notes.append(
+            f"{opponent} is ranked #{opponent_rank}."
+        )
+
+        if game.get("home_game"):
+            game_notes.append(
+                "Home-game advantage included."
+            )
+
+        if opponent in DIVISION_RIVALS:
+            game_notes.append(
+                "Division-rival bonus included."
+            )
+
+        st.caption(
+            " ".join(game_notes)
+        )
+
+    with b2:
+        st.metric(
+            "Price Score",
+            f"{breakdown['Price']}/100",
+        )
+
+        comparable_prices = [
+            float(t.get("price", 0))
+            for t in inventory
+            if normalize_week(t.get("week"))
+            == normalize_week(ticket.get("week"))
+            and int(t.get("available_quantity", 0)) > 0
+        ]
+
+        if comparable_prices:
+            cheaper_count = sum(
+                1
+                for p in comparable_prices
+                if p >= float(ticket["price"])
+            )
+
+            price_percentile = round(
+                (cheaper_count / len(comparable_prices)) * 100
+            )
+
+            st.caption(
+                f"${ticket['price']:.0f} is cheaper than "
+                f"{price_percentile}% of comparable available tickets."
+            )
+
+    with b3:
+        st.metric(
+            "Seat Quality",
+            f"{breakdown['Seat Quality']}/100",
+        )
+
+        section = str(
+            ticket.get("section", "")
+        )
+
+        row = str(
+            ticket.get("row", "")
+        )
+
+        seat_notes = []
+
+        try:
+            section_number = int(
+                "".join(
+                    c for c in section
+                    if c.isdigit()
+                )
+            )
+
+            if 101 <= section_number <= 134:
+                seat_notes.append(
+                    "Lower-bowl section."
+                )
+
+        except ValueError:
+            pass
+
+        try:
+            row_number = int(
+                "".join(
+                    c for c in row
+                    if c.isdigit()
+                )
+            )
+
+            if row_number <= 5:
+                seat_notes.append(
+                    "Excellent row position."
+                )
+
+            elif row_number <= 10:
+                seat_notes.append(
+                    "Good row position."
+                )
+
+        except ValueError:
+            pass
+
+        if not seat_notes:
+            seat_notes.append(
+                "Standard seat-quality rating based on section and row."
+            )
+
+        st.caption(
+            " ".join(seat_notes)
+        )
+
+    with b4:
+        st.metric(
+            "Availability",
+            f"{breakdown['Availability']}/100",
+        )
+
+        available = int(
+            ticket.get(
+                "available_quantity",
+                0,
+            )
+        )
+
+        if available >= ticket_count:
+            st.caption(
+                f"{available} tickets available — "
+                f"enough for your group."
             )
         else:
-            st.info("No cheaper eligible ticket is available in the current inventory.")
-
-    with budget_cols[1]:
-        if upgrade_option:
-            ut = upgrade_option["ticket"]
-            ug = upgrade_option["game"]
-            extra = float(ut["price"]) - float(ticket["price"])
-            st.info(
-                f"Spend ${extra:.0f} more/ticket for Falcons vs {ug['opponent']} "
-                f"at ${float(ut['price']):.0f}."
-            )
             st.caption(
-                f"Section {ut['section']} • Row {ut['row']} • "
-                f"Score {upgrade_option['score']}/100"
+                "Not enough tickets available "
+                "for your requested quantity."
             )
+
+    with b5:
+        st.metric(
+            "Confidence",
+            f"{breakdown['Confidence']}/100",
+        )
+
+        if confidence >= 85:
+            confidence_note = (
+                "High confidence — strong data coverage."
+            )
+
+        elif confidence >= 70:
+            confidence_note = (
+                "Good confidence — enough data for a solid comparison."
+            )
+
+        elif confidence >= 50:
+            confidence_note = (
+                "Moderate confidence — more data would improve reliability."
+            )
+
         else:
-            st.info("No higher-priced eligible upgrade is available within your budget.")
+            confidence_note = (
+                "Low confidence — limited comparison or history data."
+            )
 
-# ============================================================
-# WHY KICKSEATZ CHOSE IT
-# ============================================================
+        st.caption(
+            confidence_note
+        )
 
-st.markdown(
-    '<div class="section-title">'
-    '🧠 Why KickSeatz Chose This Ticket'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
-reasons = get_reasons(
-    ticket,
-    game,
-    budget,
-    ticket_count,
-    priority,
-)
-
-st.markdown(
-    '<div class="reason-card">',
-    unsafe_allow_html=True,
-)
-
-for reason in reasons:
-    st.markdown(
-        f"• {reason}"
-    )
-
-st.markdown(
-    "</div>",
-    unsafe_allow_html=True,
-)
-
-# ============================================================
-# BEST ALTERNATIVE
-# ============================================================
-
-if len(candidates) >= 2:
-    alternative = candidates[1]
-    at = alternative["ticket"]
-    ag = alternative["game"]
+    # ============================================================
+    # PRICE HISTORY
+    # ============================================================
 
     st.markdown(
-        '<div class="section-title">🔄 Best Alternative</div>',
+        '<div class="section-title">'
+        '📉 Price History'
+        '</div>',
         unsafe_allow_html=True,
     )
 
-    alt1, alt2, alt3 = st.columns(3)
-    with alt1:
-        st.metric("Alternative Score", f"{alternative['score']}/100")
-    with alt2:
-        st.metric("Price", f"${float(at['price']):.0f}/ticket")
-    with alt3:
-        score_gap = alternative["score"] - score
-        st.metric("Score Difference", f"{score_gap:+.0f}")
-
-    st.write(
-        f"Falcons vs **{ag['opponent']}** • Section **{at['section']}** • "
-        f"Row **{at['row']}** • {at['available_quantity']} available"
-    )
-    st.caption(
-        "This is the next option in the same recommendation model, not a separate opinion."
-    )
-
-# ============================================================
-# SCORE BREAKDOWN
-# ============================================================
-
-breakdown = {
-    "Game Quality":
-        calculate_game_score(game),
-
-    "Price":
-        calculate_price_score(
-            ticket["price"],
-            [
-                float(t.get("price", 0))
-                for t in inventory
-                if normalize_week(t.get("week"))
-                == normalize_week(ticket.get("week"))
-                and int(t.get("available_quantity", 0)) > 0
-            ]
-        ),
-
-    "Seat Quality":
-        calculate_seat_quality(ticket) * 10,
-
-    "Availability":
-        calculate_availability(
-            ticket,
-            ticket_count,
-        ),
-
-    "Confidence":
-        confidence,
-}
-
-st.write("")
-
-b1, b2, b3, b4, b5 = st.columns(5)
-
-with b1:
-    st.metric(
-        "Game Quality",
-        f"{breakdown['Game Quality']}/100",
-    )
-
-    opponent = game.get(
-        "opponent",
-        ""
-    )
-
-    opponent_rank = OPPONENT_POWER_RANKINGS.get(
-        opponent,
-        32,
-    )
-
-    game_notes = []
-
-    game_notes.append(
-        f"{opponent} is ranked #{opponent_rank}."
-    )
-
-    if game.get("home_game"):
-        game_notes.append(
-            "Home-game advantage included."
-        )
-
-    if opponent in DIVISION_RIVALS:
-        game_notes.append(
-            "Division-rival bonus included."
-        )
-
-    st.caption(
-        " ".join(game_notes)
-    )
-
-with b2:
-    st.metric(
-        "Price Score",
-        f"{breakdown['Price']}/100",
-    )
-
-    comparable_prices = [
-        float(t.get("price", 0))
-        for t in inventory
-        if normalize_week(t.get("week"))
-        == normalize_week(ticket.get("week"))
-        and int(t.get("available_quantity", 0)) > 0
-    ]
-
-    if comparable_prices:
-        cheaper_count = sum(
-            1
-            for p in comparable_prices
-            if p >= float(ticket["price"])
-        )
-
-        price_percentile = round(
-            (cheaper_count / len(comparable_prices)) * 100
-        )
-
-        st.caption(
-            f"${ticket['price']:.0f} is cheaper than "
-            f"{price_percentile}% of comparable available tickets."
-        )
-
-with b3:
-    st.metric(
-        "Seat Quality",
-        f"{breakdown['Seat Quality']}/100",
-    )
-
-    section = str(
-        ticket.get("section", "")
-    )
-
-    row = str(
-        ticket.get("row", "")
-    )
-
-    seat_notes = []
+    history_conn = sqlite3.connect(DB_PATH)
 
     try:
-        section_number = int(
-            "".join(
-                c for c in section
-                if c.isdigit()
-            )
-        )
+        history_rows = history_conn.execute(
+            """
+            SELECT price, recorded_at
+            FROM price_history
+            WHERE ticket_id = ?
+            ORDER BY recorded_at
+            """,
+            (ticket["id"],),
+        ).fetchall()
 
-        if 101 <= section_number <= 134:
-            seat_notes.append(
-                "Lower-bowl section."
-            )
+    finally:
+        history_conn.close()
 
-    except ValueError:
-        pass
+    if history_rows:
 
-    try:
-        row_number = int(
-            "".join(
-                c for c in row
-                if c.isdigit()
-            )
-        )
+        history_prices = [
+            float(row[0])
+            for row in history_rows
+        ]
 
-        if row_number <= 5:
-            seat_notes.append(
-                "Excellent row position."
-            )
-
-        elif row_number <= 10:
-            seat_notes.append(
-                "Good row position."
-            )
-
-    except ValueError:
-        pass
-
-    if not seat_notes:
-        seat_notes.append(
-            "Standard seat-quality rating based on section and row."
-        )
-
-    st.caption(
-        " ".join(seat_notes)
-    )
-
-with b4:
-    st.metric(
-        "Availability",
-        f"{breakdown['Availability']}/100",
-    )
-
-    available = int(
-        ticket.get(
-            "available_quantity",
-            0,
-        )
-    )
-
-    if available >= ticket_count:
-        st.caption(
-            f"{available} tickets available — "
-            f"enough for your group."
-        )
-    else:
-        st.caption(
-            "Not enough tickets available "
-            "for your requested quantity."
-        )
-
-with b5:
-    st.metric(
-        "Confidence",
-        f"{breakdown['Confidence']}/100",
-    )
-
-    if confidence >= 85:
-        confidence_note = (
-            "High confidence — strong data coverage."
-        )
-
-    elif confidence >= 70:
-        confidence_note = (
-            "Good confidence — enough data for a solid comparison."
-        )
-
-    elif confidence >= 50:
-        confidence_note = (
-            "Moderate confidence — more data would improve reliability."
-        )
-
-    else:
-        confidence_note = (
-            "Low confidence — limited comparison or history data."
-        )
-
-    st.caption(
-        confidence_note
-    )
-
-# ============================================================
-# PRICE HISTORY
-# ============================================================
-
-st.markdown(
-    '<div class="section-title">'
-    '📉 Price History'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
-history_conn = sqlite3.connect(DB_PATH)
-
-try:
-    history_rows = history_conn.execute(
-        """
-        SELECT price, recorded_at
-        FROM price_history
-        WHERE ticket_id = ?
-        ORDER BY recorded_at
-        """,
-        (ticket["id"],),
-    ).fetchall()
-
-finally:
-    history_conn.close()
-
-if history_rows:
-
-    history_prices = [
-        float(row[0])
-        for row in history_rows
-    ]
-
-    starting_price = history_prices[0]
-    current_price = history_prices[-1]
-    price_change = current_price - starting_price
-
-    if starting_price > 0:
-        percent_change = (
-            price_change / starting_price
-        ) * 100
-    else:
-        percent_change = 0
-
-    h1, h2, h3, h4 = st.columns(4)
-
-    with h1:
-        st.metric(
-            "Starting Price",
-            f"${starting_price:.0f}",
-        )
-
-    with h2:
-        st.metric(
-            "Current Price",
-            f"${current_price:.0f}",
-        )
-
-    with h3:
-        st.metric(
-            "Price Change",
-            f"${price_change:+.0f}",
-        )
-
-    with h4:
-        st.metric(
-            "% Change",
-            f"{percent_change:+.1f}%",
-        )
-
-    st.line_chart(
-        {
-            "Ticket Price": history_prices
-        }
-    )
-
-    if len(history_prices) >= 2:
-
-        previous_price = history_prices[-2]
+        starting_price = history_prices[0]
         current_price = history_prices[-1]
+        price_change = current_price - starting_price
 
-        price_change = (
-            current_price - previous_price
-        )
-
-        if previous_price > 0:
+        if starting_price > 0:
             percent_change = (
-                price_change / previous_price
+                price_change / starting_price
             ) * 100
         else:
             percent_change = 0
 
-        if percent_change <= -10:
+        h1, h2, h3, h4 = st.columns(4)
 
-            st.success(
-                f"🚨 Price Drop Alert — "
-                f"${abs(price_change):.0f} cheaper "
-                f"({abs(percent_change):.1f}% drop) "
-                f"than the previous recorded price."
+        with h1:
+            st.metric(
+                "Starting Price",
+                f"${starting_price:.0f}",
             )
 
-        elif price_change < 0:
-
-            st.info(
-                f"Price dropped ${abs(price_change):.0f} "
-                f"({abs(percent_change):.1f}%) "
-                f"from the previous snapshot."
+        with h2:
+            st.metric(
+                "Current Price",
+                f"${current_price:.0f}",
             )
 
-        elif price_change > 0:
-
-            st.warning(
-                f"Price increased ${price_change:.0f} "
-                f"({percent_change:.1f}%) "
-                f"from the previous snapshot."
+        with h3:
+            st.metric(
+                "Price Change",
+                f"${price_change:+.0f}",
             )
+
+        with h4:
+            st.metric(
+                "% Change",
+                f"{percent_change:+.1f}%",
+            )
+
+        st.line_chart(
+            {
+                "Ticket Price": history_prices
+            }
+        )
+
+        if len(history_prices) >= 2:
+
+            previous_price = history_prices[-2]
+            current_price = history_prices[-1]
+
+            price_change = (
+                current_price - previous_price
+            )
+
+            if previous_price > 0:
+                percent_change = (
+                    price_change / previous_price
+                ) * 100
+            else:
+                percent_change = 0
+
+            if percent_change <= -10:
+
+                st.success(
+                    f"🚨 Price Drop Alert — "
+                    f"${abs(price_change):.0f} cheaper "
+                    f"({abs(percent_change):.1f}% drop) "
+                    f"than the previous recorded price."
+                )
+
+            elif price_change < 0:
+
+                st.info(
+                    f"Price dropped ${abs(price_change):.0f} "
+                    f"({abs(percent_change):.1f}%) "
+                    f"from the previous snapshot."
+                )
+
+            elif price_change > 0:
+
+                st.warning(
+                    f"Price increased ${price_change:.0f} "
+                    f"({percent_change:.1f}%) "
+                    f"from the previous snapshot."
+                )
+
+            else:
+
+                st.info(
+                    "The ticket price has not changed "
+                    "since the previous snapshot."
+                )
 
         else:
 
             st.info(
-                "The ticket price has not changed "
-                "since the previous snapshot."
+                "Only one price snapshot has been recorded so far."
             )
+
+        st.caption(
+            f"{len(history_rows)} price snapshot(s) recorded."
+        )
 
     else:
 
         st.info(
-            "Only one price snapshot has been recorded so far."
+            "No price history has been recorded for this ticket yet."
         )
 
-    st.caption(
-        f"{len(history_rows)} price snapshot(s) recorded."
-    )
 
-else:
+    # ============================================================
 
-    st.info(
-        "No price history has been recorded for this ticket yet."
-    )
-
-
-# ============================================================
 # TOP 3 COMPARISON
 # ============================================================
 
@@ -4856,7 +5386,20 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-top_options = candidates[:3]
+interactive_options = select_interactive_ticket_options(
+    candidates,
+    limit=4,
+)
+
+top_options = interactive_options[1:4]
+
+if interactive_options:
+    st.caption(
+        "These options come directly from the loaded ticket inventory. "
+        "When no single game is selected, KickSeatz spreads the visible "
+        "options across different matchups so you can compare games as well "
+        "as seats."
+    )
 
 compare_cols = st.columns(
     len(top_options)
@@ -4953,125 +5496,6 @@ if len(candidates) > 3:
             )
 
 # ============================================================
-# BROWSE LOADED TICKET INVENTORY
-# ============================================================
-
-st.markdown(
-    '<div class="section-title">🎟️ Browse Ticket Inventory</div>',
-    unsafe_allow_html=True,
-)
-
-st.caption(
-    "These records come from the KickSeatz inventory database. "
-    "Demo prices and quantities are baseline data until live Ticketmaster "
-    "seat-level inventory is connected."
-)
-
-inventory_view = []
-
-for t in inventory:
-    week_value = normalize_week(t.get("week"))
-    game = get_game_by_week(week_value)
-
-    opponent = t.get("opponent", "Unknown")
-    game_date = t.get("game_date", "Date unavailable")
-
-    if game:
-        opponent = game.get("opponent", opponent)
-        game_date = game.get("game_date", game_date)
-
-    inventory_view.append(
-        {
-            "Week": f"Week {week_value}" if week_value is not None else "N/A",
-            "Opponent": opponent,
-            "Game Date": game_date or "TBD",
-            "Section": str(t.get("section", "N/A")),
-            "Row": str(t.get("row", "N/A")),
-            "Price / Ticket": f"${float(t.get('price', 0)):.0f}",
-            "Available": int(t.get("available_quantity", 0)),
-        }
-    )
-
-if inventory_view:
-
-    total_loaded = len(inventory_view)
-    unique_games = len({
-        (
-            row["Week"],
-            row["Opponent"],
-        )
-        for row in inventory_view
-    })
-
-    iv1, iv2 = st.columns(2)
-
-    with iv1:
-        st.metric(
-            "Loaded Ticket Records",
-            total_loaded,
-        )
-
-    with iv2:
-        st.metric(
-            "Games With Inventory",
-            unique_games,
-        )
-
-    # Give every populated game representation in the sample, rather than
-    # showing four tickets from the same matchup.
-    sample_rows = []
-    seen_games = set()
-
-    for row in inventory_view:
-        game_key = (
-            row["Week"],
-            row["Opponent"],
-        )
-
-        if game_key not in seen_games:
-            sample_rows.append(row)
-            seen_games.add(game_key)
-
-    # Add additional examples until the table reaches 16 rows.
-    for row in inventory_view:
-        if len(sample_rows) >= 16:
-            break
-        if row not in sample_rows:
-            sample_rows.append(row)
-
-    st.markdown("**Sample tickets across populated games**")
-
-    st.dataframe(
-        sample_rows,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Price / Ticket": st.column_config.TextColumn(
-                "Price / Ticket",
-            ),
-            "Available": st.column_config.NumberColumn(
-                "Available",
-                format="%d",
-            ),
-        },
-    )
-
-    with st.expander(
-        f"View all {total_loaded} loaded ticket records"
-    ):
-        st.dataframe(
-            inventory_view,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-else:
-    st.info(
-        "No ticket inventory records are loaded yet."
-    )
-
-
-# ============================================================
 # EXPORT RESULTS
 # ============================================================
 
@@ -5106,45 +5530,129 @@ st.caption(
     "value independently of your search budget."
 )
 
+rate_mode = st.radio(
+    "What do you want to rate?",
+    [
+        "KickSeatz sample ticket",
+        "My purchased ticket",
+    ],
+    horizontal=True,
+    key="rate_ticket_mode",
+)
+
+rate_is_purchased = rate_mode == "My purchased ticket"
+
+# Keep this defined in both modes because the existing Compare Tickets
+# section uses it later in the page.
 rate_options = []
 
-for t in inventory:
+if rate_is_purchased:
+    purchased_games = get_game_selector_options()
 
-    g = get_game_by_week(
-        t.get("week")
-    )
-
-    if g:
-        rate_options.append(
-            (t, g)
-        )
-
-if rate_options:
-
-    labels = [
-        f"${t['price']:.0f} • "
-        f"Falcons vs {g['opponent']} • "
-        f"Section {t['section']} "
-        f"Row {t['row']}"
-        for t, g in rate_options
+    purchased_labels = [
+        f"Week {g.get('week')} • "
+        f"Falcons {'vs' if g.get('home_game') or g.get('international_game') else 'at'} "
+        f"{g.get('opponent')} • "
+        f"{g.get('venue', 'Venue TBD')}"
+        for g in purchased_games
     ]
 
-    selected_label = st.selectbox(
-        "Select a ticket to rate",
-        labels,
-        key="rate_ticket_select",
-    )
+    pg1, pg2 = st.columns(2)
 
-    idx = labels.index(
-        selected_label
-    )
+    with pg1:
+        purchased_game_label = st.selectbox(
+            "Which game is your ticket for?",
+            purchased_labels,
+            key="purchased_ticket_game",
+        )
 
-    rt, rg = rate_options[idx]
+        purchased_game_index = purchased_labels.index(
+            purchased_game_label
+        )
+        rg = purchased_games[purchased_game_index]
+
+        purchased_price = st.number_input(
+            "What did you pay per ticket?",
+            min_value=1.0,
+            max_value=5000.0,
+            value=100.0,
+            step=5.0,
+            key="purchased_ticket_price",
+        )
+
+    with pg2:
+        purchased_section = st.text_input(
+            "Section",
+            value="123",
+            key="purchased_ticket_section",
+        )
+
+        purchased_row = st.text_input(
+            "Row",
+            value="10",
+            key="purchased_ticket_row",
+        )
+
+    rt = {
+        "id": "USER_PURCHASED_TICKET",
+        "week": rg.get("week"),
+        "opponent": rg.get("opponent"),
+        "game_date": rg.get("game_date"),
+        "section": purchased_section.strip() or "Not provided",
+        "row": purchased_row.strip() or "Not provided",
+        "price": float(purchased_price),
+        "available_quantity": 1,
+        "source": "User-entered purchased ticket",
+        "last_updated": None,
+    }
+
+    st.info(
+        "Purchased-ticket mode compares the price and seat quality with KickSeatz's "
+        "comparison data. Availability is excluded because you already own the ticket."
+    )
 
     rating = rate_ticket(
         rt,
         rg,
+        purchased=True,
     )
+
+else:
+    for t in inventory:
+        g = get_game_by_week(
+            t.get("week")
+        )
+
+        if g:
+            rate_options.append(
+                (t, g)
+            )
+
+    if rate_options:
+        labels = [
+            f"${t['price']:.0f} • "
+            f"Falcons {'vs' if g.get('home_game') or g.get('international_game') else 'at'} {g['opponent']} • "
+            f"Section {t['section']} "
+            f"Row {t['row']}"
+            for t, g in rate_options
+        ]
+
+        selected_label = st.selectbox(
+            "Select a KickSeatz sample ticket to rate",
+            labels,
+            key="rate_ticket_select",
+        )
+
+        idx = labels.index(
+            selected_label
+        )
+
+        rt, rg = rate_options[idx]
+
+        rating = rate_ticket(
+            rt,
+            rg,
+        )
 
     deal_title, deal_text = get_deal_assessment(
         rating
@@ -5176,10 +5684,16 @@ if rate_options:
             f"• Row {rt['row']}"
         )
 
-        st.write(
-            f"💵 ${rt['price']:.0f}/ticket "
-            f"• 🎟️ {rt['available_quantity']} available"
-        )
+        if rate_is_purchased:
+            st.write(
+                f"💵 ${rt['price']:.0f}/ticket "
+                f"• 🧾 User-entered purchased ticket"
+            )
+        else:
+            st.write(
+                f"💵 ${rt['price']:.0f}/ticket "
+                f"• 🎟️ {rt['available_quantity']} available"
+            )
 
     with right:
 
@@ -5254,9 +5768,14 @@ if rate_options:
 
             elif key == "availability":
 
-                st.caption(
-                    f"{rt['available_quantity']} tickets available."
-                )
+                if rate_is_purchased:
+                    st.caption(
+                        "Availability is excluded for a ticket you already own."
+                    )
+                else:
+                    st.caption(
+                        f"{rt['available_quantity']} tickets available."
+                    )
 
     st.markdown(
         "**Why this rating?**"
