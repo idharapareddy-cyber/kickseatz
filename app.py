@@ -471,6 +471,205 @@ MBS_HOME_GAME_BASELINE = [
 ]
 
 
+# ============================================================
+# COMPLETE 2026 FALCONS REGULAR-SEASON SCHEDULE
+# ============================================================
+# Full schedule and venue baseline. MBS home games have demo seat
+# inventory today. Away and Madrid games are schedule/venue records
+# until seat-level inventory is available through Ticketmaster.
+
+FULL_FALCONS_2026_SCHEDULE = [
+    {
+        "week": 1,
+        "opponent": "Pittsburgh Steelers",
+        "game_date": "2026-09-13",
+        "home_game": False,
+        "venue": "Acrisure Stadium",
+        "location": "Pittsburgh, PA",
+        "inventory_status": "schedule_only",
+    },
+    {
+        "week": 2,
+        "opponent": "Carolina Panthers",
+        "game_date": "2026-09-20",
+        "home_game": True,
+        "venue": "Mercedes-Benz Stadium",
+        "location": "Atlanta, GA",
+        "inventory_status": "mbs_demo",
+    },
+    {
+        "week": 3,
+        "opponent": "Green Bay Packers",
+        "game_date": "2026-09-24",
+        "home_game": False,
+        "venue": "Lambeau Field",
+        "location": "Green Bay, WI",
+        "inventory_status": "schedule_only",
+    },
+    {
+        "week": 4,
+        "opponent": "New Orleans Saints",
+        "game_date": "2026-10-05",
+        "home_game": False,
+        "venue": "Caesars Superdome",
+        "location": "New Orleans, LA",
+        "inventory_status": "schedule_only",
+    },
+    {
+        "week": 5,
+        "opponent": "Baltimore Ravens",
+        "game_date": "2026-10-11",
+        "home_game": True,
+        "venue": "Mercedes-Benz Stadium",
+        "location": "Atlanta, GA",
+        "inventory_status": "mbs_demo",
+    },
+    {
+        "week": 6,
+        "opponent": "Chicago Bears",
+        "game_date": "2026-10-18",
+        "home_game": True,
+        "venue": "Mercedes-Benz Stadium",
+        "location": "Atlanta, GA",
+        "inventory_status": "mbs_demo",
+    },
+    {
+        "week": 7,
+        "opponent": "San Francisco 49ers",
+        "game_date": "2026-10-25",
+        "home_game": True,
+        "venue": "Mercedes-Benz Stadium",
+        "location": "Atlanta, GA",
+        "inventory_status": "mbs_demo",
+    },
+    {
+        "week": 8,
+        "opponent": "Tampa Bay Buccaneers",
+        "game_date": "2026-11-01",
+        "home_game": False,
+        "venue": "Raymond James Stadium",
+        "location": "Tampa, FL",
+        "inventory_status": "schedule_only",
+    },
+    {
+        "week": 9,
+        "opponent": "Cincinnati Bengals",
+        "game_date": "2026-11-08",
+        "home_game": True,
+        "venue": "Bernabéu",
+        "location": "Madrid, Spain",
+        "neutral_site": True,
+        "international_game": True,
+        "inventory_status": "schedule_only",
+    },
+    {
+        "week": 10,
+        "opponent": "Kansas City Chiefs",
+        "game_date": "2026-11-15",
+        "home_game": True,
+        "venue": "Mercedes-Benz Stadium",
+        "location": "Atlanta, GA",
+        "inventory_status": "mbs_demo",
+    },
+    {
+        "week": 12,
+        "opponent": "Minnesota Vikings",
+        "game_date": "2026-11-29",
+        "home_game": False,
+        "venue": "U.S. Bank Stadium",
+        "location": "Minneapolis, MN",
+        "inventory_status": "schedule_only",
+    },
+    {
+        "week": 13,
+        "opponent": "Detroit Lions",
+        "game_date": "2026-12-06",
+        "home_game": True,
+        "venue": "Mercedes-Benz Stadium",
+        "location": "Atlanta, GA",
+        "inventory_status": "mbs_demo",
+    },
+    {
+        "week": 14,
+        "opponent": "Cleveland Browns",
+        "game_date": "2026-12-13",
+        "home_game": False,
+        "venue": "Huntington Bank Field",
+        "location": "Cleveland, OH",
+        "inventory_status": "schedule_only",
+    },
+    {
+        "week": 15,
+        "opponent": "Washington Commanders",
+        "game_date": "2026-12-20",
+        "home_game": False,
+        "venue": "Northwest Stadium",
+        "location": "Landover, MD",
+        "inventory_status": "schedule_only",
+    },
+    {
+        "week": 16,
+        "opponent": "Tampa Bay Buccaneers",
+        "game_date": None,
+        "home_game": True,
+        "venue": "Mercedes-Benz Stadium",
+        "location": "Atlanta, GA",
+        "inventory_status": "mbs_demo",
+    },
+    {
+        "week": 17,
+        "opponent": "New Orleans Saints",
+        "game_date": "2027-01-03",
+        "home_game": True,
+        "venue": "Mercedes-Benz Stadium",
+        "location": "Atlanta, GA",
+        "inventory_status": "mbs_demo",
+    },
+    {
+        "week": 18,
+        "opponent": "Carolina Panthers",
+        "game_date": None,
+        "home_game": False,
+        "venue": "Bank of America Stadium",
+        "location": "Charlotte, NC",
+        "inventory_status": "schedule_only",
+    },
+]
+
+
+def ensure_full_falcons_schedule(dataset):
+    """Guarantee the complete 2026 Falcons regular-season schedule."""
+    if not isinstance(dataset, dict):
+        dataset = {"games": []}
+
+    existing = {}
+    for game in dataset.get("games", []):
+        if not isinstance(game, dict):
+            continue
+        week_match = re.search(r"\d+", str(game.get("week", "")))
+        if not week_match:
+            continue
+        key = (
+            int(week_match.group()),
+            str(game.get("opponent", "")).strip().lower(),
+        )
+        existing[key] = game
+
+    merged = []
+    for scheduled in FULL_FALCONS_2026_SCHEDULE:
+        key = (
+            int(scheduled["week"]),
+            str(scheduled["opponent"]).strip().lower(),
+        )
+        game = dict(existing.get(key, {}))
+        game.update(scheduled)
+        merged.append(game)
+
+    merged.sort(key=lambda game: int(game.get("week", 999)))
+    dataset["games"] = merged
+    return dataset
+
+
 def ensure_home_schedule(dataset):
     """
     Guarantee that the current Mercedes-Benz Stadium home games are
@@ -561,6 +760,43 @@ MBS_BASELINE_SECTIONS = [
 ]
 
 MBS_DEMO_ROWS = ["4", "8", "12", "18"]
+
+# Explicit display order for the complete Mercedes-Benz Stadium home slate.
+# Keeping this list separate prevents older schedule JSON from shrinking the
+# UI back to a partial four-game schedule.
+MBS_HOME_GAME_WEEKS = (2, 5, 6, 7, 10, 13, 16, 17)
+
+
+def get_mbs_home_games_for_display(dataset=None):
+    """Return all 8 current MBS home games in a deterministic order."""
+    source_games = dataset if isinstance(dataset, list) else (
+        dataset.get("games", [])
+        if isinstance(dataset, dict)
+        else []
+    )
+
+    by_key = {}
+    for game in source_games:
+        if not isinstance(game, dict):
+            continue
+        match = re.search(r"\d+", str(game.get("week", "")))
+        if not match:
+            continue
+        opponent = str(game.get("opponent", "")).strip().lower()
+        by_key[(int(match.group()), opponent)] = dict(game)
+
+    result = []
+    for baseline in MBS_HOME_GAME_BASELINE:
+        week = int(baseline["week"])
+        opponent = str(baseline["opponent"]).strip()
+        game = by_key.get((week, opponent.lower()), {})
+        game.update(baseline)
+        game.setdefault("home_game", True)
+        game.setdefault("venue", "Mercedes-Benz Stadium")
+        result.append(game)
+
+    result.sort(key=lambda g: MBS_HOME_GAME_WEEKS.index(int(g.get("week"))))
+    return result
 
 
 def _demo_price_multiplier(week):
@@ -844,6 +1080,79 @@ def render_home_matchup_card(game):
     '''
 
 
+def render_schedule_matchup_card(game):
+    """Render a visual card for a home, away, or international game."""
+    opponent = str(game.get("opponent", "Opponent"))
+    week = game.get("week", "—")
+    game_date = _visual_game_date(game.get("game_date"))
+    is_home = bool(game.get("home_game"))
+    international = bool(game.get("international_game"))
+
+    if international:
+        status_label = "INTERNATIONAL"
+        venue_icon = "🌍"
+        connector = "VS"
+    elif is_home:
+        status_label = "HOME"
+        venue_icon = "🏟️"
+        connector = "VS"
+    else:
+        status_label = "AWAY"
+        venue_icon = "✈️"
+        connector = "AT"
+
+    falcons_logo = get_nfl_logo_url("Atlanta Falcons")
+    opponent_logo = get_nfl_logo_url(opponent)
+
+    if falcons_logo:
+        falcons_img = (
+            f'<img class="matchup-logo" src="{falcons_logo}" width="64" '
+            'height="64" loading="lazy" decoding="async" '
+            'alt="Atlanta Falcons logo">'
+        )
+    else:
+        falcons_img = '<div class="logo-fallback" aria-label="Atlanta Falcons">ATL</div>'
+
+    if opponent_logo:
+        opponent_img = (
+            f'<img class="matchup-logo" src="{opponent_logo}" width="64" '
+            'height="64" loading="lazy" decoding="async" '
+            f'alt="{opponent} logo">'
+        )
+    else:
+        opponent_img = f'<div class="logo-fallback" aria-label="{opponent}">NFL</div>'
+
+    if game.get("inventory_status") == "mbs_demo":
+        data_note = "MBS demo ticket inventory available"
+    else:
+        data_note = "Seat-level ticket inventory will be connected through Ticketmaster"
+
+    return f"""
+    <article class="matchup-card" aria-label="Week {week}: Atlanta Falcons {connector} {opponent}">
+        <div class="matchup-topline">
+            <span>WEEK {week}</span>
+            <span>{status_label}</span>
+        </div>
+        <div class="matchup-teams">
+            <div class="matchup-team">
+                {falcons_img}
+                <div class="matchup-team-name">Falcons</div>
+            </div>
+            <div class="matchup-vs" aria-hidden="true">{connector}</div>
+            <div class="matchup-team">
+                {opponent_img}
+                <div class="matchup-team-name">{opponent}</div>
+            </div>
+        </div>
+        <div class="matchup-meta">
+            <span>📅 {game_date}</span>
+            <span>{venue_icon} {game.get("venue", "Venue TBD")}</span>
+        </div>
+        <div class="matchup-status">{data_note}</div>
+    </article>
+    """
+
+
 def render_mbs_baseline_visual():
     """Visual section baseline; it is not a live availability map."""
     level_data = [
@@ -974,6 +1283,15 @@ st.markdown("""
     font-weight: 900;
     color: #a71930;
     letter-spacing: .08em;
+}
+
+.matchup-status {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(100,116,139,.14);
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 650;
 }
 
 .matchup-meta {
@@ -1319,8 +1637,9 @@ try:
         MASTER_DATA_PATH
     )
 
-    # Guarantee the full current MBS home schedule even if the older
-    # local JSON still contains only the original four games.
+    # Guarantee the complete 2026 Falcons schedule, then enforce the
+    # Mercedes-Benz Stadium home baseline.
+    master_dataset = ensure_full_falcons_schedule(master_dataset)
     master_dataset = ensure_home_schedule(master_dataset)
 
     ticketmaster_events = load_ticketmaster_events()
@@ -2477,56 +2796,36 @@ def get_deal_assessment(
 # ============================================================
 
 def get_game_selector_options():
-    """
-    Return the complete current Mercedes-Benz Stadium home-game baseline.
+    """Return every 2026 Falcons regular-season game in week order."""
+    games = []
 
-    The selector is intentionally anchored to MBS_HOME_GAME_BASELINE so an
-    older local JSON file or a partially populated database cannot reduce
-    the UI back to the original four games. Ticketmaster-enriched metadata
-    is merged in when available.
-    """
-    dataset_games = {}
-
-    games = (
+    source_games = {}
+    for game in (
         master_dataset.get("games", [])
         if isinstance(master_dataset, dict)
         else []
-    )
-
-    for game in games:
+    ):
         if not isinstance(game, dict):
             continue
         week = normalize_week(game.get("week"))
-        opponent = str(game.get("opponent", "")).strip()
+        opponent = str(game.get("opponent", "")).strip().lower()
         if week is not None:
-            dataset_games[(week, opponent.lower())] = game
+            source_games[(week, opponent)] = game
 
-    selected_games = []
-
-    for baseline_game in MBS_HOME_GAME_BASELINE:
-        game = dict(baseline_game)
+    for baseline_game in FULL_FALCONS_2026_SCHEDULE:
         key = (
             normalize_week(baseline_game.get("week")),
             str(baseline_game.get("opponent", "")).strip().lower(),
         )
+        game = dict(source_games.get(key, {}))
+        game.update(baseline_game)
+        game["inventory_available"] = (
+            game.get("inventory_status") == "mbs_demo"
+        )
+        games.append(game)
 
-        enriched = dataset_games.get(key)
-        if enriched:
-            # Keep the verified baseline fields authoritative while carrying
-            # Ticketmaster event metadata (event ID, links, status, etc.).
-            merged = dict(enriched)
-            merged.update(game)
-            game = merged
-
-        game.setdefault("home_game", True)
-        game.setdefault("venue", "Mercedes-Benz Stadium")
-        selected_games.append(game)
-
-    selected_games.sort(
-        key=lambda game: normalize_week(game.get("week")) or 999
-    )
-
-    return selected_games
+    games.sort(key=lambda game: normalize_week(game.get("week")) or 999)
+    return games
 
 
 def get_price_benchmark(ticket):
@@ -3091,16 +3390,27 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================
-# HOME GAME VISUALS
+# FULL SEASON SCHEDULE VISUALS
 # ============================================================
 
-home_visual_games = get_game_selector_options()
+full_schedule_visuals = get_game_selector_options()
+home_visual_games = [
+    game
+    for game in full_schedule_visuals
+    if game.get("inventory_status") == "mbs_demo"
+]
+away_visual_games = [
+    game
+    for game in full_schedule_visuals
+    if not game.get("home_game") or game.get("international_game")
+]
 
 if home_visual_games:
     st.markdown(
-        '<h2 class="section-title">🏟️ 2026 Mercedes-Benz Stadium Home Games</h2>',
+        '<h2 class="section-title">🏟️ Mercedes-Benz Stadium Home Games</h2>',
         unsafe_allow_html=True,
     )
+
     for start in range(0, len(home_visual_games), 2):
         pair = home_visual_games[start:start + 2]
         columns = st.columns(len(pair))
@@ -3110,6 +3420,28 @@ if home_visual_games:
                     render_home_matchup_card(matchup),
                     unsafe_allow_html=True,
                 )
+
+if away_visual_games:
+    st.markdown(
+        '<h2 class="section-title">✈️ Away & International Schedule</h2>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "All non-MBS games are shown as schedule/venue records. We are not fabricating "
+        "away stadium maps or current seat availability; live Ticketmaster inventory "
+        "will plug into the same recommendation engine later."
+    )
+
+    for start in range(0, len(away_visual_games), 2):
+        pair = away_visual_games[start:start + 2]
+        columns = st.columns(len(pair))
+        for column, matchup in zip(columns, pair):
+            with column:
+                st.markdown(
+                    render_schedule_matchup_card(matchup),
+                    unsafe_allow_html=True,
+                )
+
 
 # ============================================================
 # SIDEBAR
@@ -3199,8 +3531,14 @@ if priority == "Custom Mix":
     )
 
 selector_games = get_game_selector_options()
-game_selector_labels = ["All MBS Home Games"] + [
-    f"Week {g.get('week')} • Falcons vs {g.get('opponent')} • {g.get('game_date', 'Date N/A')}"
+game_selector_labels = ["All 2026 Falcons Games"] + [
+    (
+        f"Week {g.get('week')} • "
+        f"{'vs' if g.get('home_game') or g.get('international_game') else 'at'} "
+        f"{g.get('opponent')} • "
+        f"{g.get('game_date') or 'Date TBD'} • "
+        f"{g.get('venue', 'Venue TBD')}"
+    )
     for g in selector_games
 ]
 
@@ -3211,7 +3549,7 @@ selected_game_label = st.sidebar.selectbox(
 )
 
 selected_week = None
-if selected_game_label != "All MBS Home Games":
+if selected_game_label != "All 2026 Falcons Games":
     selected_index = game_selector_labels.index(selected_game_label) - 1
     selected_week = selector_games[selected_index].get("week")
 
@@ -3313,10 +3651,14 @@ with m4:
     )
 
 if selected_week is not None:
-    st.info(
-        f"Game filter active: Week {selected_week} • Falcons vs "
-        f"{get_game_by_week(selected_week).get('opponent', 'Unknown opponent')}"
-    )
+    selected_game = get_game_by_week(selected_week)
+    if selected_game:
+        connector = "vs" if selected_game.get("home_game") or selected_game.get("international_game") else "at"
+        st.info(
+            f"Game filter active: Week {selected_week} • Falcons {connector} "
+            f"{selected_game.get('opponent', 'Unknown opponent')} • "
+            f"{selected_game.get('venue', 'Venue TBD')}"
+        )
 
 # ============================================================
 # NO RESULTS
@@ -3324,9 +3666,18 @@ if selected_week is not None:
 
 if not candidates:
 
-    st.error(
-        "No tickets currently fit your requirements."
-    )
+    selected_game = get_game_by_week(selected_week) if selected_week is not None else None
+
+    if selected_game and selected_game.get("inventory_status") != "mbs_demo":
+        st.info(
+            f"Week {selected_week} is in the Falcons schedule, but seat-level inventory is not loaded "
+            f"for {selected_game.get('venue', 'this venue')} yet. The recommendation engine is ready "
+            "to use live ticket data when it is connected."
+        )
+    else:
+        st.error(
+            "No tickets currently fit your requirements."
+        )
 
     valid_prices = [
         t["price"]
