@@ -4165,8 +4165,12 @@ st.markdown("""
     font-size: 24px;
     font-weight: 900;
     letter-spacing: -.03em;
-    color: #111827;
+    color: #0f172a !important;
     margin: 0;
+}
+
+.kz-brand .kz-brand-accent {
+    color: #2563eb !important;
 }
 
 .kz-subbrand {
@@ -4271,7 +4275,7 @@ def render_platform_nav():
 
     st.markdown(
         '<div class="kz-nav">'
-        '<div class="kz-brand">🏟️ KickSeatz</div>'
+        '<div class="kz-brand">🏟️ Kick<span class="kz-brand-accent">Seatz</span></div>'
         '<div class="kz-subbrand">NFL tickets, simplified</div>'
         '</div>',
         unsafe_allow_html=True,
