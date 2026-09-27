@@ -35,11 +35,10 @@ TOP_PICKS_ENABLED = str(
 
 
 def _add_api_key_to_image_url(url, api_key):
-    if not url or not api_key:
-        return url
-
-    separator = "&" if "?" in str(url) else "?"
-    return f"{url}{separator}{urlencode({'apikey': api_key})}"
+    """Return only a public image URL; never expose an API key in the browser."""
+    if not url:
+        return None
+    return str(url)
 
 
 @st.cache_data(ttl=60)
@@ -192,10 +191,19 @@ def load_top_picks(
 
 
 
-@st.cache_data(ttl=300)
-def load_ticketmaster_events():
-    """Load Falcons event metadata without taking down the whole app if TM is unavailable."""
+@st.cache_data(ttl=600)
+def load_ticketmaster_events_for_team(team_name):
+    """Load Ticketmaster Discovery event metadata for one NFL team.
+
+    Discovery is the temporary live-event layer. It provides event metadata
+    and purchase links, but it is intentionally NOT treated as seat-level
+    inventory.
+    """
     if not TICKETMASTER_API_KEY:
+        return []
+
+    team_name = _nfl_full_team_name(team_name)
+    if team_name not in NFL_TEAM_NAMES:
         return []
 
     try:
@@ -203,21 +211,97 @@ def load_ticketmaster_events():
             "https://app.ticketmaster.com/discovery/v2/events.json",
             params={
                 "apikey": TICKETMASTER_API_KEY,
-                "keyword": "Atlanta Falcons",
-                "city": "Atlanta",
-                "stateCode": "GA",
-                "countryCode": "US",
+                "keyword": team_name,
                 "source": "ticketmaster",
                 "size": 100,
-                "sort": "date,asc",
+                "sort": "eventDate,date.asc",
             },
             timeout=10,
         )
         response.raise_for_status()
-        data = response.json()
-        return data.get("_embedded", {}).get("events", [])
+        return response.json().get("_embedded", {}).get("events", [])
     except (requests.RequestException, ValueError, TypeError):
         return []
+
+
+def find_ticketmaster_event_for_game(game):
+    """Best-effort match between an NFL schedule row and Discovery metadata."""
+    if not isinstance(game, dict) or not TICKETMASTER_API_KEY:
+        return None
+
+    team = _nfl_full_team_name(game.get("team"))
+    opponent = _nfl_full_team_name(game.get("opponent"))
+    game_date = str(game.get("game_date") or "").strip()[:10]
+    events = load_ticketmaster_events_for_team(team)
+
+    team_tokens = {
+        team.lower(),
+        str(team).split()[-1].lower(),
+    }
+    opponent_tokens = {
+        opponent.lower(),
+        str(opponent).split()[-1].lower(),
+    }
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        name = str(event.get("name") or "").lower()
+        start_data = event.get("dates", {}).get("start", {}) or {}
+        event_date = str(start_data.get("localDate") or "")[:10]
+        if game_date and event_date and event_date != game_date:
+            continue
+        if not any(token in name for token in team_tokens):
+            continue
+        if opponent and not any(token in name for token in opponent_tokens):
+            continue
+        return event
+
+    return None
+
+
+@st.cache_data(ttl=600)
+def enrich_game_with_ticketmaster(game):
+    """Attach live Discovery metadata without replacing synthetic ticket rows."""
+    if not isinstance(game, dict):
+        return game
+    copy = dict(game)
+    event = find_ticketmaster_event_for_game(copy)
+    if not event:
+        copy["ticketmaster_available"] = False
+        return copy
+
+    copy["ticketmaster_event_id"] = event.get("id")
+    copy["ticketmaster_url"] = event.get("url")
+    copy["ticketmaster_available"] = True
+    status = ((event.get("dates") or {}).get("status") or {}).get("code")
+    if status:
+        copy["ticketmaster_status"] = status
+    price_ranges = event.get("priceRanges") or []
+    if price_ranges:
+        first = price_ranges[0]
+        copy["ticketmaster_min_price"] = first.get("min")
+        copy["ticketmaster_max_price"] = first.get("max")
+        copy["ticketmaster_currency"] = first.get("currency")
+    return copy
+
+
+# Backward-compatible alias used by a few legacy functions.
+def load_ticketmaster_events():
+    """Deprecated compatibility wrapper; active UI uses team-scoped Discovery."""
+    if not TICKETMASTER_API_KEY:
+        return []
+    events = []
+    seen = set()
+    for team in NFL_TEAM_NAMES:
+        for event in load_ticketmaster_events_for_team(team):
+            event_id = str(event.get("id") or "")
+            if event_id and event_id in seen:
+                continue
+            if event_id:
+                seen.add(event_id)
+            events.append(event)
+    return events
 
 
 def enrich_games_with_ticketmaster(
@@ -786,29 +870,47 @@ def load_nfl_schedule_catalog():
     games.sort(key=lambda g: (str(g.get("game_date") or "9999"), str(g.get("game_time") or "99:99"), str(g.get("team"))))
     return games
 
-def _nfl_schedule_from_fallback():
+def _nfl_schedule_from_master_dataset():
+    """Convert any compatible local schedule cache into the NFL schedule shape."""
+    try:
+        raw_games = master_dataset.get("games", [])
+    except NameError:
+        raw_games = []
+
+    if not isinstance(raw_games, list):
+        return []
+
     result = []
-    for game in FULL_FALCONS_2026_SCHEDULE:
-        item = dict(game)
-        item.update({
-            "team": "Atlanta Falcons",
-            "away_team": "Atlanta Falcons" if not game.get("home_game") else game.get("opponent"),
-            "home_team": game.get("opponent") if not game.get("home_game") else "Atlanta Falcons",
-            "game_id": f"fallback_2026_{game.get('week')}_ATL",
-            "neutral_site": bool(game.get("international_game") or game.get("neutral_site")),
-            "selected_team_home": bool(game.get("home_game")),
-            "matchup": (
-                f"Atlanta Falcons vs {game.get('opponent')}"
-                if game.get("home_game") or game.get("international_game")
-                else f"Atlanta Falcons at {game.get('opponent')}"
-            ),
-        })
-        result.append(item)
+    for raw in raw_games:
+        if not isinstance(raw, dict):
+            continue
+        home = _nfl_full_team_name(raw.get("home_team"))
+        away = _nfl_full_team_name(raw.get("away_team"))
+        if home in NFL_TEAM_NAMES and away in NFL_TEAM_NAMES:
+            base = dict(raw)
+            base.setdefault("game_id", f"local_{raw.get('week')}_{away}_{home}")
+            base.setdefault("venue", NFL_TEAM_VENUES.get(home, {}).get("venue", "Venue TBD"))
+            base.setdefault("location", NFL_TEAM_VENUES.get(home, {}).get("location", "Location TBD"))
+            base.setdefault("neutral_site", False)
+            base.setdefault("international_game", False)
+            for team, opponent, is_home in ((home, away, True), (away, home, False)):
+                item = dict(base)
+                item.update({
+                    "team": team,
+                    "opponent": opponent,
+                    "home_game": bool(is_home and not base.get("neutral_site")),
+                    "selected_team_home": bool(is_home),
+                    "matchup": f"{team} vs {opponent}" if is_home else f"{team} at {opponent}",
+                })
+                result.append(item)
     return result
+
 
 def get_nfl_schedule_games():
     games = load_nfl_schedule_catalog()
-    return games or _nfl_schedule_from_fallback()
+    if games:
+        return games
+    return _nfl_schedule_from_master_dataset()
 
 def get_team_schedule(team_name, include_completed=True):
     team_name = _nfl_full_team_name(team_name)
@@ -1098,7 +1200,7 @@ FULL_FALCONS_2026_SCHEDULE = [
 
 
 def ensure_full_falcons_schedule(dataset):
-    """Guarantee the complete 2026 Falcons regular-season schedule."""
+    """Legacy schedule-merger retained for compatibility; active UI uses the NFL catalog."""
     if not isinstance(dataset, dict):
         dataset = {"games": []}
 
@@ -1581,7 +1683,7 @@ def ensure_nfl_demo_inventory(db_path, schedule_games):
                         # Stable row variation keeps the inventory varied without randomness.
                         row_multiplier = {"4": 1.16, "8": 1.00, "12": 0.92}[row]
                         seed = zlib.crc32(
-                            f"{viewing_team}|{opponent}|{week}|{section}|{row}".encode("utf-8")
+                            f"{home}|{away}|{week}|{section}|{row}".encode("utf-8")
                         ) % 21
                         matchup_multiplier = 0.90 + (seed / 100.0)
                         if international:
@@ -2144,7 +2246,7 @@ def ensure_inventory_team_column(db_path):
         columns = {row[1] for row in conn.execute("PRAGMA table_info(ticket_inventory)").fetchall()}
         if "team" not in columns:
             conn.execute("ALTER TABLE ticket_inventory ADD COLUMN team TEXT")
-            conn.execute("UPDATE ticket_inventory SET team = 'Atlanta Falcons' WHERE team IS NULL OR TRIM(team) = ''")
+            conn.execute("UPDATE ticket_inventory SET team = 'Unknown' WHERE team IS NULL OR TRIM(team) = ''")
             conn.commit()
     finally:
         conn.close()
@@ -2204,7 +2306,7 @@ def load_inventory(path):
         if "team" in column_names:
             optional_selects.append("team")
         else:
-            optional_selects.append("'Atlanta Falcons' AS team")
+            optional_selects.append("'Unknown' AS team")
 
         if "source" in column_names:
             optional_selects.append("source")
@@ -2258,7 +2360,7 @@ def load_inventory(path):
                     "row": r[5],
                     "price": float(r[6]),
                     "available_quantity": int(r[7]),
-                    "team": r[8] or "Atlanta Falcons",
+                    "team": r[8] or "Unknown",
                     "source": r[9],
                     "last_updated": r[10],
                 }
@@ -2333,24 +2435,12 @@ try:
         MASTER_DATA_PATH
     )
 
-    # Guarantee the complete 2026 Falcons schedule, then enforce the
-    # Mercedes-Benz Stadium home baseline.
-    master_dataset = ensure_full_falcons_schedule(master_dataset)
-    master_dataset = ensure_home_schedule(master_dataset)
-
-    ticketmaster_events = load_ticketmaster_events()
-    
-    if isinstance(master_dataset, dict):
-
-        master_dataset["games"] = (
-            enrich_games_with_ticketmaster(
-                master_dataset.get(
-                    "games",
-                    []
-                ),
-                ticketmaster_events,
-            )
-        )
+    # Use the league-wide schedule as the source of truth. The old local
+    # Falcons schedule remains only as legacy data and is not used by the
+    # active platform.
+    nfl_schedule_now = get_nfl_schedule_games()
+    if isinstance(master_dataset, dict) and nfl_schedule_now:
+        master_dataset["games"] = nfl_schedule_now
 
     # Make the demo marketplace NFL-wide. Existing rows are preserved, while
     # synthetic upcoming inventory is added for every scheduled matchup.
@@ -2491,6 +2581,20 @@ def get_game_by_week(week, team=None, opponent=None, game_date=None):
 # SCORING FUNCTIONS
 # ============================================================
 
+def is_division_rival(game):
+    """Return True when the matchup is between two clubs in the same division."""
+    if not isinstance(game, dict):
+        return False
+    team = _nfl_full_team_name(game.get("team"))
+    opponent = _nfl_full_team_name(game.get("opponent"))
+    if not team or not opponent or team == opponent:
+        return False
+    return (
+        NFL_TEAM_DIVISIONS.get(team) is not None
+        and NFL_TEAM_DIVISIONS.get(team) == NFL_TEAM_DIVISIONS.get(opponent)
+    )
+
+
 def calculate_game_score(game):
 
     if not game:
@@ -2519,7 +2623,7 @@ def calculate_game_score(game):
     if game.get("home_game"):
         score += 15
 
-    if opponent in DIVISION_RIVALS:
+    if is_division_rival(game):
         score += 15
 
     if game.get("ticketmaster_available"):
@@ -2627,9 +2731,10 @@ def calculate_price_score(price, comparable_prices):
 
 def _same_inventory_game(a, b):
     """Match inventory rows from the same team/opponent/season week."""
+    a_team = _nfl_full_team_name(a.get("team") or "Unknown")
+    b_team = _nfl_full_team_name(b.get("team") or "Unknown")
     return (
-        _nfl_full_team_name(a.get("team") or "Atlanta Falcons")
-        == _nfl_full_team_name(b.get("team") or "Atlanta Falcons")
+        a_team == b_team
         and normalize_week(a.get("week")) == normalize_week(b.get("week"))
         and str(a.get("opponent") or "").strip().lower()
         == str(b.get("opponent") or "").strip().lower()
@@ -2812,7 +2917,7 @@ def calculate_opportunity_score(ticket, game, eligible_pairs, budget, ticket_cou
         relative_price_score = 50
 
     value_ratios = []
-    for t, _g in eligible_pairs:
+    for t in same_game:
         price = float(t.get("price", 0))
         if price > 0:
             value_ratios.append((calculate_seat_quality(t) * 10) / price)
@@ -3235,7 +3340,7 @@ def get_reasons(
 
     if game.get("home_game"):
         reasons.append(
-            "Atlanta is playing at home, which adds value "
+            f"{game.get('team', 'The selected team')} is playing at home, which adds value "
             "to the matchup."
         )
 
@@ -3245,7 +3350,7 @@ def get_reasons(
             "apply the home-game advantage."
         )
 
-    if opponent in DIVISION_RIVALS:
+    if is_division_rival(game):
         reasons.append(
             f"{opponent} is a division rival, giving the "
             f"matchup additional rivalry value."
@@ -3512,35 +3617,31 @@ def get_deal_assessment(
 # ============================================================
 
 def get_game_selector_options():
-    """Return every 2026 Falcons regular-season game in week order."""
+    """Return the available NFL schedule as physical matchups for legacy controls."""
     games = []
-
-    source_games = {}
-    for game in (
-        master_dataset.get("games", [])
-        if isinstance(master_dataset, dict)
-        else []
-    ):
-        if not isinstance(game, dict):
+    seen = set()
+    for raw in get_nfl_schedule_games():
+        if not isinstance(raw, dict):
             continue
-        week = normalize_week(game.get("week"))
-        opponent = str(game.get("opponent", "")).strip().lower()
-        if week is not None:
-            source_games[(week, opponent)] = game
-
-    for baseline_game in FULL_FALCONS_2026_SCHEDULE:
-        key = (
-            normalize_week(baseline_game.get("week")),
-            str(baseline_game.get("opponent", "")).strip().lower(),
-        )
-        game = dict(source_games.get(key, {}))
-        game.update(baseline_game)
-        game["inventory_available"] = (
-            game.get("inventory_status") == "mbs_demo"
-        )
+        game_id = str(raw.get("game_id") or "").strip()
+        if not game_id:
+            game_id = f"{raw.get('week')}|{raw.get('away_team')}|{raw.get('home_team')}"
+        if game_id in seen:
+            continue
+        seen.add(game_id)
+        if raw.get("away_team") and raw.get("home_team"):
+            game = dict(raw)
+            game.update({
+                "team": _nfl_full_team_name(raw.get("home_team")),
+                "opponent": _nfl_full_team_name(raw.get("away_team")),
+                "home_game": True,
+                "selected_team_home": True,
+                "matchup": f"{raw.get('home_team')} vs {raw.get('away_team')}",
+            })
+        else:
+            game = dict(raw)
         games.append(game)
-
-    games.sort(key=lambda game: normalize_week(game.get("week")) or 999)
+    games.sort(key=lambda game: (normalize_week(game.get("week")) or 999, str(game.get("game_date") or "9999")))
     return games
 
 
@@ -3569,14 +3670,32 @@ GAME_TRAVEL_MILES_FROM_ATLANTA = {
 }
 
 
-def get_game_price_stats(week):
-    prices = [
-        float(t.get("price", 0))
-        for t in inventory
-        if normalize_week(t.get("week")) == normalize_week(week)
-        and int(t.get("available_quantity", 0)) > 0
-        and float(t.get("price", 0)) > 0
-    ]
+def get_game_price_stats(week, team=None, opponent=None, game_date=None):
+    prices = []
+    target_team = _nfl_full_team_name(team) if team else None
+    target_opponent = _nfl_full_team_name(opponent) if opponent else None
+    target_date = str(game_date or "").strip()[:10]
+
+    for ticket in inventory:
+        if normalize_week(ticket.get("week")) != normalize_week(week):
+            continue
+        if int(ticket.get("available_quantity", 0)) <= 0:
+            continue
+        if float(ticket.get("price", 0)) <= 0:
+            continue
+
+        if target_team and target_opponent:
+            ticket_team = _nfl_full_team_name(ticket.get("team"))
+            ticket_opponent = _nfl_full_team_name(ticket.get("opponent"))
+            direct = ticket_team == target_team and ticket_opponent == target_opponent
+            reverse = ticket_team == target_opponent and ticket_opponent == target_team
+            if not (direct or reverse):
+                continue
+
+        if target_date and str(ticket.get("game_date") or "").strip()[:10] not in {"", target_date}:
+            continue
+
+        prices.append(float(ticket.get("price", 0)))
 
     if not prices:
         return None
@@ -3637,42 +3756,41 @@ def get_game_area_availability(week, preferred_area):
 
 
 def calculate_travel_fit(game, travel_preference):
-    opponent = str(game.get("opponent", ""))
+    """Broad travel preference signal; intentionally not a routing/distance estimate."""
+    home = bool(game.get("home_game"))
+    international = bool(game.get("international_game"))
 
-    if game.get("international_game"):
-        miles = GAME_TRAVEL_MILES_FROM_ATLANTA.get(opponent, 4600)
-    elif game.get("home_game"):
-        miles = 0
-    else:
-        miles = GAME_TRAVEL_MILES_FROM_ATLANTA.get(opponent, 1200)
+    if travel_preference == "Home area only":
+        return 100 if home else 0
 
-    limits = {
-        "Atlanta only": 0,
-        "Up to 500 miles": 500,
-        "Up to 1,000 miles": 1000,
-        "Anywhere in the U.S.": 3000,
-        "Anywhere, including international": 10000,
-    }
+    if travel_preference == "Up to 500 miles":
+        if home:
+            return 100
+        return 35 if international else 70
 
-    limit = limits[travel_preference]
+    if travel_preference == "Up to 1,000 miles":
+        if home:
+            return 100
+        return 45 if international else 82
 
-    if miles <= limit:
+    if travel_preference == "Anywhere in the U.S.":
+        if international:
+            return 20
+        return 100 if home else 92
+
+    if travel_preference == "Anywhere, including international":
         return 100
 
-    if limit == 0:
-        return 0
-
-    excess_ratio = (miles - limit) / max(miles, 1)
-    return round(max(0, 100 - excess_ratio * 100))
+    return 70
 
 
 def calculate_fan_type_fit(game, fan_type):
     opponent = game.get("opponent", "")
     home = bool(game.get("home_game"))
-    rival = opponent in DIVISION_RIVALS
+    rival = is_division_rival(game)
     quality = calculate_game_score(game)
 
-    if fan_type == "Die-hard Falcons fan":
+    if fan_type == "Team-first fan":
         return 100 if home else 65
 
     if fan_type == "Rivalry fan":
@@ -3695,13 +3813,13 @@ def calculate_vibe_fit(game, vibe):
     quality = calculate_game_score(game)
 
     if vibe == "Rivalry atmosphere":
-        return 100 if opponent in DIVISION_RIVALS else 45
+        return 100 if is_division_rival(game) else 45
 
     if vibe == "Elite opponent / marquee matchup":
         return quality
 
     if vibe == "Affordable / value-focused":
-        stats = get_game_price_stats(game.get("week"))
+        stats = get_game_price_stats(game.get("week"), game.get("team"), game.get("opponent"), game.get("game_date"))
         if not stats:
             return 60
         return round(max(0, min(100, 115 - stats["median"] * 0.65)))
@@ -3724,7 +3842,7 @@ def calculate_budget_fit(game, budget_band):
     }
 
     limit = limits[budget_band]
-    stats = get_game_price_stats(game.get("week"))
+    stats = get_game_price_stats(game.get("week"), game.get("team"), game.get("opponent"), game.get("game_date"))
 
     if not stats:
         return 60
@@ -3785,8 +3903,8 @@ def get_personalized_game_reasons(game, preferences, components):
             reasons.append(f"The {opponent} matchup fits your rivalry-focused fan profile.")
         elif preferences["fan_type"] == "Road-trip fan":
             reasons.append("This game fits your road-trip preference.")
-        elif preferences["fan_type"] == "Die-hard Falcons fan":
-            reasons.append("This is a Falcons home game, matching your team-first preference.")
+        elif preferences["fan_type"] == "Team-first fan":
+            reasons.append("This is a home game, matching your team-first preference.")
         elif preferences["fan_type"] == "Big matchup / star-game fan":
             reasons.append("The opponent gives this game strong matchup appeal.")
         else:
@@ -4842,7 +4960,7 @@ def render_platform_profile():
             location = st.text_input(
                 "Your city or ZIP code",
                 value=str(preferences.get("location", "")),
-                placeholder="Example: Atlanta or 30318",
+                placeholder="Example: City or ZIP code",
                 help="Use a city or ZIP code. KickSeatz does not need your street address.",
                 key="kz_profile_location",
             )
@@ -5190,23 +5308,54 @@ def _get_saved_favorite_team():
     return (saved or {}).get("favorite_team") or ""
 
 def _get_ticket_inventory_for_game(team, game, budget=None, ticket_count=1):
-    team = _nfl_full_team_name(team)
+    """Return demo/live listings for a physical NFL matchup."""
+    requested_team = _nfl_full_team_name(team) if team and team != "All NFL" else "All NFL"
+    week = normalize_week(game.get("week"))
+    game_team = _nfl_full_team_name(game.get("team"))
+    game_opponent = _nfl_full_team_name(game.get("opponent"))
+    allowed_pairs = {
+        (game_team, game_opponent),
+        (game_opponent, game_team),
+    }
+
     matches = []
+    seen_physical = set()
     for ticket in inventory:
-        if _nfl_full_team_name(ticket.get("team") or "Atlanta Falcons") != team:
+        ticket_team = _nfl_full_team_name(ticket.get("team") or "Unknown")
+        ticket_opponent = _nfl_full_team_name(ticket.get("opponent"))
+        if normalize_week(ticket.get("week")) != week:
             continue
-        if normalize_week(ticket.get("week")) != normalize_week(game.get("week")):
-            continue
-        if str(ticket.get("opponent") or "").strip().lower() != str(game.get("opponent") or "").strip().lower():
-            continue
+
+        if requested_team != "All NFL":
+            if ticket_team != requested_team:
+                continue
+            if str(ticket.get("opponent") or "").strip().lower() != str(game.get("opponent") or "").strip().lower():
+                continue
+        else:
+            if (ticket_team, ticket_opponent) not in allowed_pairs:
+                continue
+
         if budget is not None and float(ticket.get("price", 0)) > float(budget):
             continue
         if int(ticket.get("available_quantity", 0)) < int(ticket_count):
             continue
+
+        physical_key = (
+            week,
+            min(ticket_team.lower(), ticket_opponent.lower()),
+            max(ticket_team.lower(), ticket_opponent.lower()),
+            str(ticket.get("section") or "").strip().lower(),
+            str(ticket.get("row") or "").strip().lower(),
+            round(float(ticket.get("price", 0)), 2),
+        )
+        if requested_team == "All NFL" and physical_key in seen_physical:
+            continue
+        seen_physical.add(physical_key)
         matches.append(ticket)
+
     return matches
 
-def _generic_game_match_score(game, favorite_team, favorite_opponents, home_away, vibe):
+def _generic_game_match_score(game, favorite_team, favorite_opponents, home_away, vibe, travel="Anywhere, including international"):
     score = 55.0
     reasons = []
     opponent = game.get("opponent") or ""
@@ -5222,6 +5371,11 @@ def _generic_game_match_score(game, favorite_team, favorite_opponents, home_away
         score += 10 if not game.get("home_game") and not game.get("neutral_site") else -8
     else:
         score += 4
+
+    travel_fit = calculate_travel_fit(game, travel)
+    score += (travel_fit - 70) * 0.22
+    if travel_fit >= 82:
+        reasons.append("The travel profile fits the range you selected.")
     if vibe == "Home-field experience" and game.get("home_game"):
         score += 10
     elif vibe == "Unique travel experience" and (game.get("international_game") or not game.get("home_game")):
@@ -5241,7 +5395,32 @@ def _generic_game_match_score(game, favorite_team, favorite_opponents, home_away
 
 def get_generic_nfl_game_recommendations(preferences):
     favorite_team = preferences.get("team") or _get_saved_favorite_team()
-    games = get_team_schedule(favorite_team) if favorite_team else get_nfl_schedule_games()
+    if favorite_team:
+        games = get_team_schedule(favorite_team)
+    else:
+        games = []
+        seen_games = set()
+        for raw_game in get_nfl_schedule_games():
+            key = str(raw_game.get("game_id") or "").strip()
+            if not key:
+                home = raw_game.get("home_team") or raw_game.get("team")
+                away = raw_game.get("away_team") or raw_game.get("opponent")
+                key = f"{raw_game.get('week')}|{home}|{away}"
+            if key in seen_games:
+                continue
+            seen_games.add(key)
+            if raw_game.get("away_team") and raw_game.get("home_team"):
+                game = dict(raw_game)
+                game.update({
+                    "team": _nfl_full_team_name(raw_game.get("home_team")),
+                    "opponent": _nfl_full_team_name(raw_game.get("away_team")),
+                    "home_game": True,
+                    "selected_team_home": True,
+                    "matchup": f"{raw_game.get('home_team')} vs {raw_game.get('away_team')}",
+                })
+                games.append(game)
+            else:
+                games.append(dict(raw_game))
     favorite_opponents = preferences.get("favorite_opponents") or []
     home_away = preferences.get("home_away", "Either")
     vibe = preferences.get("vibe", "Elite opponent / marquee matchup")
@@ -5250,7 +5429,10 @@ def get_generic_nfl_game_recommendations(preferences):
     games = [g for g in games if not g.get("game_date") or str(g.get("game_date")) >= today]
     results = []
     for game in games:
-        score, reasons = _generic_game_match_score(game, favorite_team, favorite_opponents, home_away, vibe)
+        score, reasons = _generic_game_match_score(
+            game, favorite_team, favorite_opponents, home_away, vibe,
+            preferences.get("travel", "Anywhere, including international"),
+        )
         demos = _get_ticket_inventory_for_game(game.get("team"), game, budget=budget, ticket_count=1)
         if demos and vibe == "Affordable / value-focused":
             score = min(100, score + 8)
@@ -5325,7 +5507,7 @@ def render_platform_home():
             st.write("**Next games**")
             for game in explorer_games:
                 st.write(f"• {_format_nfl_matchup(game)} — {game.get('game_date') or 'Date TBD'}")
-    st.caption("NFL schedule data powers league-wide discovery. This MVP also includes synthetic demo ticket availability across upcoming NFL matchups so every team can be explored before live seat inventory is connected.")
+    st.caption("32 NFL teams • league-wide schedule discovery • synthetic demo ticket availability • Ticketmaster Discovery metadata when available")
 
 def render_platform_find_game():
     saved = load_saved_profile() or {}
@@ -5377,7 +5559,7 @@ def render_platform_find_tickets():
     default_team = saved_team if saved_team in NFL_TEAM_NAMES else "All NFL"
     st.markdown("## 🎟️ Find Tickets")
     st.write("Search the NFL by team or matchup, then compare synthetic demo listings while live ticketing access is pending.")
-    st.info("Demo Marketplace: ticket availability and prices are synthetic examples for the NFL-wide MVP, not live resale listings.")
+    st.info("Demo Marketplace: ticket availability, seat locations, and prices are synthetic examples for the NFL-wide MVP. Ticketmaster Discovery may provide live event metadata, but seat-level offers are not connected yet.")
     left, right = st.columns(2)
     with left:
         team_options = ["All NFL"] + NFL_TEAM_NAMES
@@ -5393,19 +5575,42 @@ def render_platform_find_tickets():
         selected_label = st.selectbox("Game", labels or ["No games available"], index=min(default_idx, max(0, len(labels)-1)), key="kz_ticket_search_game")
     selected_game = team_games[labels.index(selected_label)] if labels else None
 
-    a,b,c = st.columns(3)
+    a,b,c,d = st.columns(4)
     with a:
         budget = st.number_input("Max price per ticket", min_value=1.0, max_value=5000.0, value=float(saved.get("typical_budget", 100.0) or 100.0), step=5.0, key="kz_ticket_search_budget")
     with b:
         ticket_count = st.selectbox("Tickets", [1,2,3,4], index=max(0,min(3,int(saved.get("ticket_count",2) or 2)-1)), key="kz_ticket_search_count")
     with c:
         priority = st.selectbox("Prioritize", ["Best Overall Value", "Lowest Price", "Best Seats"], key="kz_ticket_search_priority")
+    with d:
+        seat_area = st.selectbox(
+            "Seat area",
+            ["No preference", "Lower Bowl", "Upper Bowl"],
+            index=["No preference", "Lower Bowl", "Upper Bowl"].index(saved.get("seat_area", "No preference")) if saved.get("seat_area", "No preference") in {"No preference", "Lower Bowl", "Upper Bowl"} else 0,
+            key="kz_ticket_search_area",
+        )
 
     if not selected_game:
         st.info("No schedule entry is available for this team yet.")
         return
+    selected_game = enrich_game_with_ticketmaster(selected_game)
     st.markdown(render_nfl_matchup_card(selected_game), unsafe_allow_html=True)
+    if selected_game.get("ticketmaster_available"):
+        tm_cols = st.columns([3, 1])
+        with tm_cols[0]:
+            st.caption("Live event metadata: Ticketmaster Discovery • Demo seat inventory below remains synthetic until seat-level access is authorized.")
+        with tm_cols[1]:
+            url = selected_game.get("ticketmaster_url")
+            if url:
+                st.link_button("View Ticketmaster", url, use_container_width=True)
+    else:
+        st.caption("Ticketmaster Discovery metadata is unavailable for this matchup right now; synthetic demo inventory is still available for the MVP.")
     matches = _get_ticket_inventory_for_game(team, selected_game, budget=budget, ticket_count=ticket_count)
+    if seat_area != "No preference":
+        matches = [
+            ticket for ticket in matches
+            if get_seat_area(ticket.get("section")) == seat_area
+        ]
     if not matches:
         st.markdown("### Ticket availability")
         with st.container(border=True):
@@ -5577,7 +5782,7 @@ if current_platform_page == "profile":
     st.stop()
 
 st.caption(
-    "KickSeatz marketplace mode • NFL schedule + venue baseline • connected ticket inventory"
+    "KickSeatz marketplace mode • 32-team NFL schedule • demo inventory + Ticketmaster Discovery"
 )
 
 # HERO
@@ -5664,7 +5869,7 @@ with st.expander("🎯 Find My Ideal Game", expanded=False):
         quiz_fan_type = st.selectbox(
             "What type of fan are you?",
             [
-                "Die-hard Falcons fan",
+                "Team-first fan",
                 "Rivalry fan",
                 "Big matchup / star-game fan",
                 "Casual / social fan",
@@ -5676,7 +5881,7 @@ with st.expander("🎯 Find My Ideal Game", expanded=False):
         quiz_travel = st.selectbox(
             "How far are you willing to travel?",
             [
-                "Atlanta only",
+                "Home area only",
                 "Up to 500 miles",
                 "Up to 1,000 miles",
                 "Anywhere in the U.S.",
@@ -5755,7 +5960,7 @@ with st.expander("🎯 Find My Ideal Game", expanded=False):
 
         st.success(
             f"🎯 Your Ideal Game: Week {ideal_week} • "
-            f"Falcons {matchup_word} {ideal_game.get('opponent')} • "
+            f"{ideal_game.get('team', 'NFL Team')} {matchup_word} {ideal_game.get('opponent')} • "
             f"{ideal_game.get('venue', 'Venue TBD')}"
         )
 
@@ -5791,7 +5996,7 @@ with st.expander("🎯 Find My Ideal Game", expanded=False):
                 )
                 st.write(
                     f"**{result['score']}/100** • Week {game.get('week')} • "
-                    f"Falcons {matchup_word} {game.get('opponent')}"
+                    f"{game.get('team', 'NFL Team')} {matchup_word} {game.get('opponent')}"
                 )
 
         st.caption(
@@ -6023,7 +6228,7 @@ if selected_week is not None:
     if selected_game:
         connector = "vs" if selected_game.get("home_game") or selected_game.get("international_game") else "at"
         st.info(
-            f"Game filter active: Week {selected_week} • Falcons {connector} "
+            f"Game filter active: Week {selected_week} • {selected_game.get("team", "NFL Team")} {connector} "
             f"{selected_game.get('opponent', 'Unknown opponent')} • "
             f"{selected_game.get('venue', 'Venue TBD')}"
         )
@@ -6038,7 +6243,7 @@ if not candidates:
 
     if selected_game and selected_game.get("inventory_status") != "mbs_demo":
         st.info(
-            f"Week {selected_week} is in the Falcons schedule, but seat-level inventory is not loaded "
+            f"Week {selected_week} is in the NFL schedule, but seat-level inventory is not loaded "
             f"for {selected_game.get('venue', 'this venue')} yet. The recommendation engine is ready "
             "to use live ticket data when it is connected."
         )
