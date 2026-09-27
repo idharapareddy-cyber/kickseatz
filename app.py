@@ -371,7 +371,12 @@ def enrich_games_with_ticketmaster(
             if opponent and opponent not in event_name:
                 continue
 
-            if "falcons" not in event_name:
+            # Match the current team/opponent rather than a single NFL club.
+            team_name = str(game.get("team") or "").lower()
+            opponent_name = str(game.get("opponent") or "").lower()
+            if team_name and team_name.split()[-1] not in event_name and team_name not in event_name:
+                continue
+            if opponent and not any(token in event_name for token in {opponent_name, opponent_name.split()[-1]}):
                 continue
 
             matching_event = event
@@ -501,72 +506,24 @@ MASTER_DATA_PATH = find_file(
 )
 
 # ============================================================
-# REAL-WORLD VENUE BASELINE / DEMO INVENTORY
+# NFL-WIDE DEMO INVENTORY ARCHITECTURE
 # ============================================================
-# Ticketmaster's public schedule and Mercedes-Benz Stadium seating
-# structure are used as the baseline. Prices and quantities generated
-# here are DEMONSTRATION values until authorized live seat inventory
-# is available through Ticketmaster Top Picks.
-#
-# This layer is intentionally separate from the recommendation engine.
-# When live inventory becomes available, Ticketmaster data can replace
-# these rows without changing the scoring / Opportunity Engine.
+# Ticketmaster Discovery supplies event metadata when configured. The seat
+# listings below are intentionally synthetic demo inventory for the MVP.
+# They are generated for every scheduled NFL matchup and every team-facing
+# browsing perspective. This keeps the recommendation engine independent of
+# any one club or stadium and makes the future switch to authorized live seat
+# inventory straightforward.
 
-MBS_HOME_GAME_BASELINE = [
-    {
-        "week": 2,
-        "opponent": "Carolina Panthers",
-        "game_date": "2026-09-20",
-    },
-    {
-        "week": 5,
-        "opponent": "Baltimore Ravens",
-        "game_date": "2026-10-11",
-    },
-    {
-        "week": 6,
-        "opponent": "Chicago Bears",
-        "game_date": "2026-10-18",
-    },
-    {
-        "week": 7,
-        "opponent": "San Francisco 49ers",
-        "game_date": "2026-10-25",
-    },
-    {
-        "week": 10,
-        "opponent": "Kansas City Chiefs",
-        "game_date": "2026-11-15",
-    },
-    {
-        "week": 13,
-        "opponent": "Detroit Lions",
-        "game_date": "2026-12-06",
-    },
-    {
-        "week": 16,
-        "opponent": "Tampa Bay Buccaneers",
-        "game_date": None,
-    },
-    {
-        "week": 17,
-        "opponent": "New Orleans Saints",
-        "game_date": "2027-01-03",
-    },
-]
-
-
-# ============================================================
 # NFL-WIDE VENUE REGISTRY
 # ============================================================
 #
 # KickSeatz is being structured as an NFL-wide platform. The registry
 # covers all 32 clubs and their current primary home venue, including
 # shared stadiums. It is intentionally separate from seat-level
-# inventory: only Mercedes-Benz Stadium has the detailed demo seating
-# baseline in this MVP. Other venues are registered now so live or
-# venue-specific seating data can plug in later without redesigning the
-# recommendation engine.
+# Venue metadata is kept separate from seat-level inventory. Synthetic
+# inventory is generated across the league, while venue-specific maps can
+# be upgraded later when authoritative seating data is available.
 #
 # Venue names are descriptive metadata; this block does not claim that
 # any section/row is currently for sale.
@@ -770,223 +727,6 @@ NFL_TEAM_VENUES = {
     },
 }
 
-NFL_TEAM_CODES = {
-    "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
-    "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
-    "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
-    "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
-    "HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAX": "Jacksonville Jaguars",
-    "JAC": "Jacksonville Jaguars", "KC": "Kansas City Chiefs", "LV": "Las Vegas Raiders",
-    "LVR": "Las Vegas Raiders", "LAC": "Los Angeles Chargers", "LA": "Los Angeles Rams",
-    "LAR": "Los Angeles Rams", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings",
-    "NE": "New England Patriots", "NO": "New Orleans Saints", "NYG": "New York Giants",
-    "NYJ": "New York Jets", "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers",
-    "SF": "San Francisco 49ers", "SEA": "Seattle Seahawks", "TB": "Tampa Bay Buccaneers",
-    "TEN": "Tennessee Titans", "WAS": "Washington Commanders",
-}
-NFL_TEAM_NAMES = sorted(set(NFL_TEAM_CODES.values()))
-NFL_TEAM_DIVISIONS = {
-    "Arizona Cardinals": "NFC West", "Atlanta Falcons": "NFC South", "Baltimore Ravens": "AFC North",
-    "Buffalo Bills": "AFC East", "Carolina Panthers": "NFC South", "Chicago Bears": "NFC North",
-    "Cincinnati Bengals": "AFC North", "Cleveland Browns": "AFC North", "Dallas Cowboys": "NFC East",
-    "Denver Broncos": "AFC West", "Detroit Lions": "NFC North", "Green Bay Packers": "NFC North",
-    "Houston Texans": "AFC South", "Indianapolis Colts": "AFC South", "Jacksonville Jaguars": "AFC South",
-    "Kansas City Chiefs": "AFC West", "Las Vegas Raiders": "AFC West", "Los Angeles Chargers": "AFC West",
-    "Los Angeles Rams": "NFC West", "Miami Dolphins": "AFC East", "Minnesota Vikings": "NFC North",
-    "New England Patriots": "AFC East", "New Orleans Saints": "NFC South", "New York Giants": "NFC East",
-    "New York Jets": "AFC East", "Philadelphia Eagles": "NFC East", "Pittsburgh Steelers": "AFC North",
-    "San Francisco 49ers": "NFC West", "Seattle Seahawks": "NFC West", "Tampa Bay Buccaneers": "NFC South",
-    "Tennessee Titans": "AFC South", "Washington Commanders": "NFC East",
-}
-NFL_INTERNATIONAL_STADIUM_NAMES = {
-    "Tottenham Hotspur Stadium", "Wembley Stadium", "Bernabéu Stadium", "Santiago Bernabéu Stadium",
-    "Melbourne Cricket Ground", "Estadio Banorte", "FC Bayern Munich Arena", "FC Bayern Munich Stadium",
-    "Stade de France", "Maracanã Stadium",
-}
-
-def _nfl_full_team_name(value):
-    value = str(value or "").strip()
-    if value in NFL_TEAM_NAMES:
-        return value
-    return NFL_TEAM_CODES.get(value.upper(), value)
-
-@st.cache_data(ttl=1800)
-def load_nfl_schedule_catalog():
-    """Load the 2026 NFL regular-season schedule for all clubs."""
-    url = "https://raw.githubusercontent.com/leesharpe/nfldata/master/data/games.csv"
-    try:
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        reader = csv.DictReader(io.StringIO(response.text))
-    except (requests.RequestException, ValueError, TypeError):
-        return []
-
-    games = []
-    for raw in reader:
-        if str(raw.get("season", "")).strip() != "2026":
-            continue
-        if str(raw.get("game_type", "")).strip().upper() != "REG":
-            continue
-
-        away_team = _nfl_full_team_name(raw.get("away_team"))
-        home_team = _nfl_full_team_name(raw.get("home_team"))
-        if away_team not in NFL_TEAM_NAMES or home_team not in NFL_TEAM_NAMES:
-            continue
-
-        stadium = str(raw.get("stadium", "") or "").strip()
-        neutral = (
-            str(raw.get("location", "") or "").strip().lower() == "neutral"
-            or stadium in NFL_INTERNATIONAL_STADIUM_NAMES
-        )
-        home_info = NFL_TEAM_VENUES.get(home_team, {})
-        venue = stadium or home_info.get("venue") or "Venue TBD"
-        venue_location = home_info.get("location", "Location TBD")
-        if stadium in NFL_INTERNATIONAL_STADIUM_NAMES:
-            venue_location = NFL_INTERNATIONAL_VENUES_2026.get(stadium, {}).get("location", venue_location)
-
-        week_text = str(raw.get("week", "") or "").strip()
-        week_match = re.search(r"\d+", week_text)
-        week = int(week_match.group()) if week_match else week_text
-        game_date = str(raw.get("gameday", "") or "").strip() or None
-        game_time = str(raw.get("gametime", "") or "").strip() or None
-        game_id = str(raw.get("game_id", "") or f"2026_{week}_{away_team}_{home_team}")
-        base = {
-            "game_id": game_id, "week": week, "game_date": game_date, "game_time": game_time,
-            "kickoff": f"{game_date} {game_time}" if game_date and game_time else (game_date or "Date TBD"),
-            "away_team": away_team, "home_team": home_team, "venue": venue, "location": venue_location,
-            "stadium_name": stadium, "neutral_site": neutral,
-            "international_game": stadium in NFL_INTERNATIONAL_STADIUM_NAMES,
-        }
-        for team, opponent, is_home in ((home_team, away_team, True), (away_team, home_team, False)):
-            item = dict(base)
-            item.update({
-                "team": team, "opponent": opponent,
-                "home_game": bool(is_home and not neutral),
-                "selected_team_home": bool(is_home),
-                "matchup": f"{team} vs {opponent}" if is_home or neutral else f"{team} at {opponent}",
-            })
-            games.append(item)
-
-    games.sort(key=lambda g: (str(g.get("game_date") or "9999"), str(g.get("game_time") or "99:99"), str(g.get("team"))))
-    return games
-
-def _nfl_schedule_from_master_dataset():
-    """Convert any compatible local schedule cache into the NFL schedule shape."""
-    try:
-        raw_games = master_dataset.get("games", [])
-    except NameError:
-        raw_games = []
-
-    if not isinstance(raw_games, list):
-        return []
-
-    result = []
-    for raw in raw_games:
-        if not isinstance(raw, dict):
-            continue
-        home = _nfl_full_team_name(raw.get("home_team"))
-        away = _nfl_full_team_name(raw.get("away_team"))
-        if home in NFL_TEAM_NAMES and away in NFL_TEAM_NAMES:
-            base = dict(raw)
-            base.setdefault("game_id", f"local_{raw.get('week')}_{away}_{home}")
-            base.setdefault("venue", NFL_TEAM_VENUES.get(home, {}).get("venue", "Venue TBD"))
-            base.setdefault("location", NFL_TEAM_VENUES.get(home, {}).get("location", "Location TBD"))
-            base.setdefault("neutral_site", False)
-            base.setdefault("international_game", False)
-            for team, opponent, is_home in ((home, away, True), (away, home, False)):
-                item = dict(base)
-                item.update({
-                    "team": team,
-                    "opponent": opponent,
-                    "home_game": bool(is_home and not base.get("neutral_site")),
-                    "selected_team_home": bool(is_home),
-                    "matchup": f"{team} vs {opponent}" if is_home else f"{team} at {opponent}",
-                })
-                result.append(item)
-    return result
-
-
-def get_nfl_schedule_games():
-    games = load_nfl_schedule_catalog()
-    if games:
-        return games
-    return _nfl_schedule_from_master_dataset()
-
-def get_team_schedule(team_name, include_completed=True):
-    team_name = _nfl_full_team_name(team_name)
-    games = [g for g in get_nfl_schedule_games() if g.get("team") == team_name]
-    if include_completed:
-        return games
-    today = datetime.now().strftime("%Y-%m-%d")
-    return [g for g in games if not g.get("game_date") or str(g.get("game_date")) >= today]
-
-def get_upcoming_nfl_games(team_name=None, limit=12):
-    games = get_nfl_schedule_games()
-    today = datetime.now().strftime("%Y-%m-%d")
-    games = [g for g in games if not g.get("game_date") or str(g.get("game_date")) >= today]
-
-    if team_name and team_name != "All NFL":
-        games = [g for g in games if g.get("team") == _nfl_full_team_name(team_name)]
-    else:
-        # The schedule loader stores a team-centric row for each club. For the
-        # league-wide homepage, reduce those two rows back to one matchup.
-        unique = {}
-        for g in games:
-            key = g.get("game_id")
-            if key in unique:
-                continue
-            game = dict(g)
-            game["team"] = game.get("away_team")
-            game["opponent"] = game.get("home_team")
-            game["home_game"] = False
-            game["selected_team_home"] = False
-            game["matchup"] = f"{game.get('away_team')} at {game.get('home_team')}"
-            unique[key] = game
-        games = list(unique.values())
-
-    games.sort(key=lambda g: (str(g.get("game_date") or "9999"), str(g.get("game_time") or "99:99"), str(g.get("team"))))
-    return games[:max(1, int(limit))]
-
-def get_nfl_game_for_ticket(ticket):
-    team = _nfl_full_team_name(ticket.get("team") or "Atlanta Falcons")
-    week = normalize_week(ticket.get("week"))
-    opponent = str(ticket.get("opponent") or "").strip().lower()
-    game_date = str(ticket.get("game_date") or "").strip()
-    for game in get_team_schedule(team):
-        if week is not None and normalize_week(game.get("week")) != week:
-            continue
-        if opponent and str(game.get("opponent") or "").strip().lower() != opponent:
-            continue
-        if game_date and str(game.get("game_date") or "")[:10] not in {"", game_date[:10]}:
-            continue
-        return game
-    return None
-
-def _format_nfl_matchup(game):
-    connector = "vs" if game.get("neutral_site") or game.get("home_game") else "at"
-    return f"{game.get('team')} {connector} {game.get('opponent')}"
-
-def render_nfl_matchup_card(game):
-    team = game.get("team") or game.get("home_team") or "NFL Team"
-    opponent = game.get("opponent") or "Opponent"
-    team_logo = get_nfl_logo_url(team)
-    opponent_logo = get_nfl_logo_url(opponent)
-    logos = ""
-    if team_logo:
-        logos += f'<img src="{team_logo}" width="42" height="42" loading="lazy" decoding="async" alt="{team} logo">'
-    if opponent_logo:
-        logos += f'<img src="{opponent_logo}" width="42" height="42" loading="lazy" decoding="async" alt="{opponent} logo">'
-    status = "Neutral" if game.get("neutral_site") else ("Home" if game.get("home_game") else "Away")
-    intl = " • International" if game.get("international_game") else ""
-    return (
-        '<div class="market-matchup-card">'
-        f'<div class="market-matchup-top"><div><div class="market-matchup-label">Week {game.get("week", "—")} • {status}{intl}</div>'
-        f'<div class="market-matchup-title">{_format_nfl_matchup(game)}</div></div><div class="market-logos">{logos}</div></div>'
-        f'<div class="market-matchup-meta">📅 {game.get("game_date") or "Date TBD"} • ⏰ {game.get("game_time") or "Time TBD"}</div>'
-        f'<div class="market-matchup-meta">🏟️ {game.get("venue") or "Venue TBD"} • {game.get("location") or "Location TBD"}</div>'
-        '</div>'
-    )
-
 NFL_UNIQUE_VENUES = sorted({
     data["venue"]
     for data in NFL_TEAM_VENUES.values()
@@ -1033,523 +773,319 @@ def get_game_venue_info(game):
     return None
 
 
-# ============================================================
-# COMPLETE 2026 FALCONS REGULAR-SEASON SCHEDULE
-# ============================================================
-# Full schedule and venue baseline. MBS home games have demo seat
-# inventory today. Away and Madrid games are schedule/venue records
-# until seat-level inventory is available through Ticketmaster.
-
-FULL_FALCONS_2026_SCHEDULE = [
-    {
-        "week": 1,
-        "opponent": "Pittsburgh Steelers",
-        "game_date": "2026-09-13",
-        "home_game": False,
-        "venue": "Acrisure Stadium",
-        "location": "Pittsburgh, PA",
-        "inventory_status": "schedule_only",
-    },
-    {
-        "week": 2,
-        "opponent": "Carolina Panthers",
-        "game_date": "2026-09-20",
-        "home_game": True,
-        "venue": "Mercedes-Benz Stadium",
-        "location": "Atlanta, GA",
-        "inventory_status": "mbs_demo",
-    },
-    {
-        "week": 3,
-        "opponent": "Green Bay Packers",
-        "game_date": "2026-09-24",
-        "home_game": False,
-        "venue": "Lambeau Field",
-        "location": "Green Bay, WI",
-        "inventory_status": "schedule_only",
-    },
-    {
-        "week": 4,
-        "opponent": "New Orleans Saints",
-        "game_date": "2026-10-05",
-        "home_game": False,
-        "venue": "Caesars Superdome",
-        "location": "New Orleans, LA",
-        "inventory_status": "schedule_only",
-    },
-    {
-        "week": 5,
-        "opponent": "Baltimore Ravens",
-        "game_date": "2026-10-11",
-        "home_game": True,
-        "venue": "Mercedes-Benz Stadium",
-        "location": "Atlanta, GA",
-        "inventory_status": "mbs_demo",
-    },
-    {
-        "week": 6,
-        "opponent": "Chicago Bears",
-        "game_date": "2026-10-18",
-        "home_game": True,
-        "venue": "Mercedes-Benz Stadium",
-        "location": "Atlanta, GA",
-        "inventory_status": "mbs_demo",
-    },
-    {
-        "week": 7,
-        "opponent": "San Francisco 49ers",
-        "game_date": "2026-10-25",
-        "home_game": True,
-        "venue": "Mercedes-Benz Stadium",
-        "location": "Atlanta, GA",
-        "inventory_status": "mbs_demo",
-    },
-    {
-        "week": 8,
-        "opponent": "Tampa Bay Buccaneers",
-        "game_date": "2026-11-01",
-        "home_game": False,
-        "venue": "Raymond James Stadium",
-        "location": "Tampa, FL",
-        "inventory_status": "schedule_only",
-    },
-    {
-        "week": 9,
-        "opponent": "Cincinnati Bengals",
-        "game_date": "2026-11-08",
-        "home_game": True,
-        "venue": "Bernabéu",
-        "location": "Madrid, Spain",
-        "neutral_site": True,
-        "international_game": True,
-        "inventory_status": "schedule_only",
-    },
-    {
-        "week": 10,
-        "opponent": "Kansas City Chiefs",
-        "game_date": "2026-11-15",
-        "home_game": True,
-        "venue": "Mercedes-Benz Stadium",
-        "location": "Atlanta, GA",
-        "inventory_status": "mbs_demo",
-    },
-    {
-        "week": 12,
-        "opponent": "Minnesota Vikings",
-        "game_date": "2026-11-29",
-        "home_game": False,
-        "venue": "U.S. Bank Stadium",
-        "location": "Minneapolis, MN",
-        "inventory_status": "schedule_only",
-    },
-    {
-        "week": 13,
-        "opponent": "Detroit Lions",
-        "game_date": "2026-12-06",
-        "home_game": True,
-        "venue": "Mercedes-Benz Stadium",
-        "location": "Atlanta, GA",
-        "inventory_status": "mbs_demo",
-    },
-    {
-        "week": 14,
-        "opponent": "Cleveland Browns",
-        "game_date": "2026-12-13",
-        "home_game": False,
-        "venue": "Huntington Bank Field",
-        "location": "Cleveland, OH",
-        "inventory_status": "schedule_only",
-    },
-    {
-        "week": 15,
-        "opponent": "Washington Commanders",
-        "game_date": "2026-12-20",
-        "home_game": False,
-        "venue": "Northwest Stadium",
-        "location": "Landover, MD",
-        "inventory_status": "schedule_only",
-    },
-    {
-        "week": 16,
-        "opponent": "Tampa Bay Buccaneers",
-        "game_date": None,
-        "home_game": True,
-        "venue": "Mercedes-Benz Stadium",
-        "location": "Atlanta, GA",
-        "inventory_status": "mbs_demo",
-    },
-    {
-        "week": 17,
-        "opponent": "New Orleans Saints",
-        "game_date": "2027-01-03",
-        "home_game": True,
-        "venue": "Mercedes-Benz Stadium",
-        "location": "Atlanta, GA",
-        "inventory_status": "mbs_demo",
-    },
-    {
-        "week": 18,
-        "opponent": "Carolina Panthers",
-        "game_date": None,
-        "home_game": False,
-        "venue": "Bank of America Stadium",
-        "location": "Charlotte, NC",
-        "inventory_status": "schedule_only",
-    },
-]
 
 
-def ensure_full_falcons_schedule(dataset):
-    """Legacy schedule-merger retained for compatibility; active UI uses the NFL catalog."""
-    if not isinstance(dataset, dict):
-        dataset = {"games": []}
 
-    existing = {}
-    for game in dataset.get("games", []):
-        if not isinstance(game, dict):
+NFL_TEAM_CODES = {
+    "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
+    "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
+    "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
+    "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
+    "HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAX": "Jacksonville Jaguars",
+    "JAC": "Jacksonville Jaguars", "KC": "Kansas City Chiefs", "LV": "Las Vegas Raiders",
+    "LVR": "Las Vegas Raiders", "LAC": "Los Angeles Chargers", "LA": "Los Angeles Rams",
+    "LAR": "Los Angeles Rams", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings",
+    "NE": "New England Patriots", "NO": "New Orleans Saints", "NYG": "New York Giants",
+    "NYJ": "New York Jets", "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers",
+    "SF": "San Francisco 49ers", "SEA": "Seattle Seahawks", "TB": "Tampa Bay Buccaneers",
+    "TEN": "Tennessee Titans", "WAS": "Washington Commanders",
+}
+NFL_TEAM_NAMES = sorted(set(NFL_TEAM_CODES.values()))
+NFL_TEAM_DIVISIONS = {
+    "Arizona Cardinals": "NFC West", "Atlanta Falcons": "NFC South", "Baltimore Ravens": "AFC North",
+    "Buffalo Bills": "AFC East", "Carolina Panthers": "NFC South", "Chicago Bears": "NFC North",
+    "Cincinnati Bengals": "AFC North", "Cleveland Browns": "AFC North", "Dallas Cowboys": "NFC East",
+    "Denver Broncos": "AFC West", "Detroit Lions": "NFC North", "Green Bay Packers": "NFC North",
+    "Houston Texans": "AFC South", "Indianapolis Colts": "AFC South", "Jacksonville Jaguars": "AFC South",
+    "Kansas City Chiefs": "AFC West", "Las Vegas Raiders": "AFC West", "Los Angeles Chargers": "AFC West",
+    "Los Angeles Rams": "NFC West", "Miami Dolphins": "AFC East", "Minnesota Vikings": "NFC North",
+    "New England Patriots": "AFC East", "New Orleans Saints": "NFC South", "New York Giants": "NFC East",
+    "New York Jets": "AFC East", "Philadelphia Eagles": "NFC East", "Pittsburgh Steelers": "AFC North",
+    "San Francisco 49ers": "NFC West", "Seattle Seahawks": "NFC West", "Tampa Bay Buccaneers": "NFC South",
+    "Tennessee Titans": "AFC South", "Washington Commanders": "NFC East",
+}
+NFL_INTERNATIONAL_STADIUM_NAMES = {
+    "Tottenham Hotspur Stadium", "Wembley Stadium", "Bernabéu Stadium", "Santiago Bernabéu Stadium",
+    "Melbourne Cricket Ground", "Estadio Banorte", "FC Bayern Munich Arena", "FC Bayern Munich Stadium",
+    "Stade de France", "Maracanã Stadium",
+}
+
+
+def _nfl_full_team_name(value):
+    value = str(value or "").strip()
+    if value in NFL_TEAM_NAMES:
+        return value
+    return NFL_TEAM_CODES.get(value.upper(), value)
+
+
+@st.cache_data(ttl=1800)
+def load_nfl_schedule_catalog():
+    """Load the current 2026 NFL regular-season schedule for all clubs."""
+    url = "https://raw.githubusercontent.com/leesharpe/nfldata/master/data/games.csv"
+    try:
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        reader = csv.DictReader(io.StringIO(response.text))
+    except (requests.RequestException, ValueError, TypeError):
+        return []
+
+    games = []
+    for raw in reader:
+        if str(raw.get("season", "")).strip() != "2026":
             continue
-        week_match = re.search(r"\d+", str(game.get("week", "")))
-        if not week_match:
+        if str(raw.get("game_type", "")).strip().upper() != "REG":
             continue
-        key = (
-            int(week_match.group()),
-            str(game.get("opponent", "")).strip().lower(),
+
+        away_team = _nfl_full_team_name(raw.get("away_team"))
+        home_team = _nfl_full_team_name(raw.get("home_team"))
+        if away_team not in NFL_TEAM_NAMES or home_team not in NFL_TEAM_NAMES:
+            continue
+
+        stadium = str(raw.get("stadium", "") or "").strip()
+        neutral = (
+            str(raw.get("location", "") or "").strip().lower() == "neutral"
+            or stadium in NFL_INTERNATIONAL_STADIUM_NAMES
         )
-        existing[key] = game
+        home_info = NFL_TEAM_VENUES.get(home_team, {})
+        venue = stadium or home_info.get("venue") or "Venue TBD"
+        location = home_info.get("location", "Location TBD")
+        if stadium in NFL_INTERNATIONAL_STADIUM_NAMES:
+            location = NFL_INTERNATIONAL_VENUES_2026.get(stadium, {}).get("location", location)
 
-    merged = []
-    for scheduled in FULL_FALCONS_2026_SCHEDULE:
-        key = (
-            int(scheduled["week"]),
-            str(scheduled["opponent"]).strip().lower(),
-        )
-        game = dict(existing.get(key, {}))
-        game.update(scheduled)
-        merged.append(game)
-
-    merged.sort(key=lambda game: int(game.get("week", 999)))
-    dataset["games"] = merged
-    return dataset
-
-
-def ensure_home_schedule(dataset):
-    """
-    Guarantee that the current Mercedes-Benz Stadium home games are
-    present in the in-memory schedule, even when the older local JSON
-    contains only the original four games. Existing game records are
-    preserved; missing home games are appended.
-    """
-    if not isinstance(dataset, dict):
-        dataset = {"games": []}
-
-    games = dataset.get("games", [])
-    if not isinstance(games, list):
-        games = []
-
-    by_week = {}
-    for game in games:
-        if not isinstance(game, dict):
-            continue
-        match = re.search(r"\d+", str(game.get("week", "")))
-        if match:
-            by_week[int(match.group())] = game
-
-    for home_game in MBS_HOME_GAME_BASELINE:
-        week = int(home_game["week"])
-        if week not in by_week:
-            new_game = dict(home_game)
-            new_game.update({
-                "home_game": True,
-                "venue": "Mercedes-Benz Stadium",
+        week_text = str(raw.get("week", "") or "").strip()
+        week_match = re.search(r"\d+", week_text)
+        week = int(week_match.group()) if week_match else week_text
+        game_date = str(raw.get("gameday", "") or "").strip() or None
+        game_time = str(raw.get("gametime", "") or "").strip() or None
+        game_id = str(raw.get("game_id", "") or f"2026_{week}_{away_team}_{home_team}")
+        base = {
+            "game_id": game_id,
+            "week": week,
+            "game_date": game_date,
+            "game_time": game_time,
+            "kickoff": f"{game_date} {game_time}" if game_date and game_time else (game_date or "Date TBD"),
+            "away_team": away_team,
+            "home_team": home_team,
+            "venue": venue,
+            "location": location,
+            "stadium_name": stadium,
+            "neutral_site": neutral,
+            "international_game": stadium in NFL_INTERNATIONAL_STADIUM_NAMES,
+        }
+        for team, opponent, is_home in ((home_team, away_team, True), (away_team, home_team, False)):
+            item = dict(base)
+            item.update({
+                "team": team,
+                "opponent": opponent,
+                "home_game": bool(is_home and not neutral),
+                "selected_team_home": bool(is_home),
+                "matchup": f"{team} vs {opponent}" if is_home or neutral else f"{team} at {opponent}",
             })
-            games.append(new_game)
-            by_week[week] = new_game
-        else:
-            by_week[week].setdefault("home_game", True)
-            by_week[week].setdefault("venue", "Mercedes-Benz Stadium")
+            games.append(item)
 
-    games.sort(
-        key=lambda game: (
-            int(re.search(r"\d+", str(game.get("week", "999"))).group())
-            if re.search(r"\d+", str(game.get("week", "")))
-            else 999
+    games.sort(key=lambda g: (str(g.get("game_date") or "9999"), str(g.get("game_time") or "99:99"), str(g.get("team"))))
+    return games
+
+
+@st.cache_data(ttl=900)
+def load_espn_nfl_schedule_catalog():
+    """Fallback 2026 NFL schedule feed using ESPN's public scoreboard endpoint."""
+    try:
+        response = requests.get(
+            "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
+            params={"limit": 1000, "dates": "20260101-20271231"},
+            timeout=15,
         )
-    )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError, TypeError):
+        return []
 
-    dataset["games"] = games
-    return dataset
-
-# Real Mercedes-Benz Stadium seating sections documented by the
-# stadium. We use representative sections across the 100/200/300
-# levels plus documented club sections. We do NOT claim these rows
-# are currently available for sale.
-MBS_BASELINE_SECTIONS = [
-    # 100 level / lower bowl
-    ("101", "100", 145),
-    ("105", "100", 135),
-    ("108", "100", 150),
-    ("112", "100", 150),
-    ("116", "100", 125),
-    ("121", "100", 120),
-    ("124", "100", 130),
-    ("128", "100", 135),
-    ("131", "100", 140),
-    ("133", "100", 120),
-    # documented field-level club sections
-    ("108C", "Club", 275),
-    ("110C", "Club", 295),
-    ("128C", "Club", 295),
-    ("130C", "Club", 275),
-    # 200 level
-    ("203", "200", 95),
-    ("210", "200", 90),
-    ("216", "200", 85),
-    ("220", "200", 80),
-    ("223", "200", 82),
-    ("232", "200", 78),
-    ("236", "200", 88),
-    ("243", "200", 82),
-    ("246", "200", 78),
-    # 300 level
-    ("301", "300", 58),
-    ("308", "300", 62),
-    ("315", "300", 65),
-    ("323", "300", 55),
-    ("328", "300", 52),
-    ("333", "300", 58),
-    ("340", "300", 50),
-    ("345", "300", 55),
-]
-
-MBS_DEMO_ROWS = ["4", "8", "12", "18"]
-
-# Explicit display order for the complete Mercedes-Benz Stadium home slate.
-# Keeping this list separate prevents older schedule JSON from shrinking the
-# UI back to a partial four-game schedule.
-MBS_HOME_GAME_WEEKS = (2, 5, 6, 7, 10, 13, 16, 17)
-
-
-def get_mbs_home_games_for_display(dataset=None):
-    """Return all 8 current MBS home games in a deterministic order."""
-    source_games = dataset if isinstance(dataset, list) else (
-        dataset.get("games", [])
-        if isinstance(dataset, dict)
-        else []
-    )
-
-    by_key = {}
-    for game in source_games:
-        if not isinstance(game, dict):
+    games = []
+    for event in payload.get("events", []) or []:
+        if not isinstance(event, dict):
             continue
-        match = re.search(r"\d+", str(game.get("week", "")))
-        if not match:
+        season = (event.get("season") or {}).get("year")
+        season_type = str((event.get("season") or {}).get("slug") or "").lower()
+        if str(season) != "2026" or (season_type and season_type not in {"regular-season", "regular"}):
             continue
-        opponent = str(game.get("opponent", "")).strip().lower()
-        by_key[(int(match.group()), opponent)] = dict(game)
+        competitions = event.get("competitions") or []
+        if not competitions or not isinstance(competitions[0], dict):
+            continue
+        competition = competitions[0]
+        competitors = competition.get("competitors") or []
+        home = next((c for c in competitors if c.get("homeAway") == "home"), None)
+        away = next((c for c in competitors if c.get("homeAway") == "away"), None)
+        if not home or not away:
+            continue
+        home_name = _nfl_full_team_name((home.get("team") or {}).get("abbreviation"))
+        away_name = _nfl_full_team_name((away.get("team") or {}).get("abbreviation"))
+        if home_name not in NFL_TEAM_NAMES or away_name not in NFL_TEAM_NAMES:
+            continue
+        date_value = str(competition.get("date") or event.get("date") or "")
+        game_date = date_value[:10] or None
+        game_time = date_value[11:16] if len(date_value) >= 16 else None
+        week_data = (event.get("week") or {}).get("number")
+        week = int(week_data) if str(week_data).isdigit() else week_data or "—"
+        venue_obj = competition.get("venue") or {}
+        venue = str(venue_obj.get("fullName") or "").strip()
+        address = venue_obj.get("address") or {}
+        location = ", ".join(
+            str(value).strip()
+            for value in (address.get("city"), address.get("state"), address.get("country"))
+            if value
+        ) or NFL_TEAM_VENUES.get(home_name, {}).get("location", "Location TBD")
+        neutral = bool(competition.get("neutralSite"))
+        base = {
+            "game_id": str(event.get("id") or f"2026_{week}_{away_name}_{home_name}"),
+            "week": week,
+            "game_date": game_date,
+            "game_time": game_time,
+            "kickoff": f"{game_date} {game_time}" if game_date and game_time else (game_date or "Date TBD"),
+            "away_team": away_name,
+            "home_team": home_name,
+            "venue": venue or NFL_TEAM_VENUES.get(home_name, {}).get("venue", "Venue TBD"),
+            "location": location,
+            "stadium_name": venue,
+            "neutral_site": neutral,
+            "international_game": bool(neutral),
+        }
+        for team, opponent, is_home in ((home_name, away_name, True), (away_name, home_name, False)):
+            item = dict(base)
+            item.update({
+                "team": team,
+                "opponent": opponent,
+                "home_game": bool(is_home and not neutral),
+                "selected_team_home": bool(is_home),
+                "matchup": f"{team} vs {opponent}" if is_home or neutral else f"{team} at {opponent}",
+            })
+            games.append(item)
+    games.sort(key=lambda g: (str(g.get("game_date") or "9999"), str(g.get("game_time") or "99:99"), str(g.get("team"))))
+    return games
+
+
+def _nfl_schedule_from_master_dataset():
+    """Convert any compatible local schedule cache into the NFL schedule shape."""
+    try:
+        raw_games = master_dataset.get("games", [])
+    except NameError:
+        raw_games = []
+    if not isinstance(raw_games, list):
+        return []
 
     result = []
-    for baseline in MBS_HOME_GAME_BASELINE:
-        week = int(baseline["week"])
-        opponent = str(baseline["opponent"]).strip()
-        game = by_key.get((week, opponent.lower()), {})
-        game.update(baseline)
-        game.setdefault("home_game", True)
-        game.setdefault("venue", "Mercedes-Benz Stadium")
-        result.append(game)
-
-    result.sort(key=lambda g: MBS_HOME_GAME_WEEKS.index(int(g.get("week"))))
+    for raw in raw_games:
+        if not isinstance(raw, dict):
+            continue
+        home = _nfl_full_team_name(raw.get("home_team"))
+        away = _nfl_full_team_name(raw.get("away_team"))
+        if home not in NFL_TEAM_NAMES or away not in NFL_TEAM_NAMES:
+            continue
+        base = dict(raw)
+        base.setdefault("game_id", f"local_{raw.get('week')}_{away}_{home}")
+        base.setdefault("venue", NFL_TEAM_VENUES.get(home, {}).get("venue", "Venue TBD"))
+        base.setdefault("location", NFL_TEAM_VENUES.get(home, {}).get("location", "Location TBD"))
+        base.setdefault("neutral_site", False)
+        base.setdefault("international_game", False)
+        for team, opponent, is_home in ((home, away, True), (away, home, False)):
+            item = dict(base)
+            item.update({
+                "team": team,
+                "opponent": opponent,
+                "home_game": bool(is_home and not base.get("neutral_site")),
+                "selected_team_home": bool(is_home),
+                "matchup": f"{team} vs {opponent}" if is_home else f"{team} at {opponent}",
+            })
+            result.append(item)
     return result
 
 
-def _demo_price_multiplier(week):
-    """Small matchup-based demo adjustment; not a market-price claim."""
-    return {
-        2: 0.88,
-        5: 1.18,
-        6: 0.94,
-        7: 1.02,
-        10: 1.28,
-        13: 1.04,
-        16: 0.96,
-        17: 1.10,
-    }.get(int(week), 1.0)
+def get_nfl_schedule_games():
+    games = load_nfl_schedule_catalog()
+    if games:
+        return games
+    games = load_espn_nfl_schedule_catalog()
+    if games:
+        return games
+    return _nfl_schedule_from_master_dataset()
 
 
-def ensure_mbs_demo_inventory(db_path):
-    """
-    Add a realistic Mercedes-Benz Stadium baseline when the local
-    inventory is still tiny. Existing user/API rows are preserved.
+def get_team_schedule(team_name, include_completed=True):
+    team_name = _nfl_full_team_name(team_name)
+    games = [g for g in get_nfl_schedule_games() if g.get("team") == team_name]
+    if include_completed:
+        return games
+    today = datetime.now().strftime("%Y-%m-%d")
+    return [g for g in games if not g.get("game_date") or str(g.get("game_date")) >= today]
 
-    This function only seeds missing demo combinations. It never claims
-    the generated rows are live Ticketmaster availability.
-    """
-    conn = sqlite3.connect(db_path)
 
-    try:
-        table_check = conn.execute(
-            """
-            SELECT name
-            FROM sqlite_master
-            WHERE type = 'table'
-              AND name = 'ticket_inventory'
-            """
-        ).fetchone()
+def get_upcoming_nfl_games(team_name=None, limit=12):
+    games = get_nfl_schedule_games()
+    today = datetime.now().strftime("%Y-%m-%d")
+    games = [g for g in games if not g.get("game_date") or str(g.get("game_date")) >= today]
+    if team_name and team_name != "All NFL":
+        games = [g for g in games if g.get("team") == _nfl_full_team_name(team_name)]
+    else:
+        unique = {}
+        for g in games:
+            key = g.get("game_id")
+            if key in unique:
+                continue
+            game = dict(g)
+            game["team"] = game.get("away_team")
+            game["opponent"] = game.get("home_team")
+            game["home_game"] = False
+            game["selected_team_home"] = False
+            game["matchup"] = f"{game.get('away_team')} at {game.get('home_team')}"
+            unique[key] = game
+        games = list(unique.values())
+    games.sort(key=lambda g: (str(g.get("game_date") or "9999"), str(g.get("game_time") or "99:99"), str(g.get("team"))))
+    return games[:max(1, int(limit))]
 
-        if table_check is None:
-            return 0
 
-        columns = {
-            row[1]
-            for row in conn.execute(
-                "PRAGMA table_info(ticket_inventory)"
-            ).fetchall()
-        }
+def get_nfl_game_for_ticket(ticket):
+    team = _nfl_full_team_name(ticket.get("team"))
+    if team not in NFL_TEAM_NAMES:
+        return None
+    week = normalize_week(ticket.get("week"))
+    opponent = str(ticket.get("opponent") or "").strip().lower()
+    game_date = str(ticket.get("game_date") or "").strip()
+    for game in get_team_schedule(team):
+        if week is not None and normalize_week(game.get("week")) != week:
+            continue
+        if opponent and str(game.get("opponent") or "").strip().lower() != opponent:
+            continue
+        if game_date and str(game.get("game_date") or "")[:10] not in {"", game_date[:10]}:
+            continue
+        return game
+    return None
 
-        required = {
-            "id",
-            "week",
-            "opponent",
-            "game_date",
-            "section",
-            "row",
-            "price",
-            "quantity",
-        }
 
-        if not required.issubset(columns):
-            return 0
+def _format_nfl_matchup(game):
+    connector = "vs" if game.get("neutral_site") or game.get("home_game") else "at"
+    return f"{game.get('team')} {connector} {game.get('opponent')}"
 
-        existing = conn.execute(
-            """
-            SELECT week, opponent, section, row
-            FROM ticket_inventory
-            """
-        ).fetchall()
 
-        existing_keys = {
-            (
-                int(re.search(r"\d+", str(week)).group()) if re.search(r"\d+", str(week)) else str(week).strip(),
-                str(opponent).strip(),
-                str(section).strip(),
-                str(row).strip(),
-            )
-            for week, opponent, section, row in existing
-        }
-
-        max_id_row = conn.execute(
-            "SELECT COALESCE(MAX(id), 0) FROM ticket_inventory"
-        ).fetchone()
-        next_id = int(max_id_row[0] or 0) + 1
-
-        has_source = "source" in columns
-        has_last_updated = "last_updated" in columns
-        has_event_id = "event_id" in columns
-
-        inserted = 0
-
-        for game in MBS_HOME_GAME_BASELINE:
-            multiplier = _demo_price_multiplier(game["week"])
-
-            for section, level, base_price in MBS_BASELINE_SECTIONS:
-                # Four representative rows per section create enough
-                # variety for filters, seat scoring, comparison, and
-                # Opportunity Engine testing without pretending to be
-                # a complete seat-by-seat marketplace feed.
-                for row_number in MBS_DEMO_ROWS:
-                    key = (
-                        int(game["week"]),
-                        game["opponent"],
-                        section,
-                        row_number,
-                    )
-
-                    if key in existing_keys:
-                        continue
-
-                    row_adjustment = {
-                        "4": 1.16,
-                        "8": 1.08,
-                        "12": 1.00,
-                        "18": 0.94,
-                    }[row_number]
-
-                    price = max(
-                        35,
-                        round(
-                            base_price
-                            * multiplier
-                            * row_adjustment
-                            / 5
-                        )
-                        * 5,
-                    )
-
-                    quantity = {
-                        "4": 2,
-                        "8": 4,
-                        "12": 4,
-                        "18": 6,
-                    }[row_number]
-
-                    source = (
-                        "KickSeatz Demo Inventory | "
-                        "MBS Ticketmaster Seating Baseline"
-                    )
-                    last_updated = datetime.now().isoformat()
-
-                    fields = [
-                        "id",
-                        "week",
-                        "opponent",
-                        "game_date",
-                        "section",
-                        "row",
-                        "price",
-                        "quantity",
-                    ]
-                    values = [
-                        next_id,
-                        game["week"],
-                        game["opponent"],
-                        game["game_date"],
-                        section,
-                        row_number,
-                        price,
-                        quantity,
-                    ]
-
-                    if has_event_id:
-                        fields.append("event_id")
-                        values.append(
-                            f"DEMO-MBS-2026-W{int(game['week']):02d}"
-                        )
-
-                    if has_source:
-                        fields.append("source")
-                        values.append(source)
-
-                    if has_last_updated:
-                        fields.append("last_updated")
-                        values.append(last_updated)
-
-                    placeholders = ", ".join("?" for _ in fields)
-                    conn.execute(
-                        f"INSERT INTO ticket_inventory "
-                        f"({', '.join(fields)}) "
-                        f"VALUES ({placeholders})",
-                        values,
-                    )
-
-                    existing_keys.add(key)
-                    next_id += 1
-                    inserted += 1
-
-        conn.commit()
-        return inserted
-
-    finally:
-        conn.close()
-
+def render_nfl_matchup_card(game):
+    team = game.get("team") or game.get("home_team") or "NFL Team"
+    opponent = game.get("opponent") or "Opponent"
+    team_logo = get_nfl_logo_url(team)
+    opponent_logo = get_nfl_logo_url(opponent)
+    logos = ""
+    if team_logo:
+        logos += f'<img src="{team_logo}" width="42" height="42" loading="lazy" decoding="async" alt="{team} logo">'
+    if opponent_logo:
+        logos += f'<img src="{opponent_logo}" width="42" height="42" loading="lazy" decoding="async" alt="{opponent} logo">'
+    status = "Neutral" if game.get("neutral_site") else ("Home" if game.get("home_game") else "Away")
+    intl = " • International" if game.get("international_game") else ""
+    return (
+        '<div class="market-matchup-card">'
+        f'<div class="market-matchup-top"><div><div class="market-matchup-label">Week {game.get("week", "—")} • {status}{intl}</div>'
+        f'<div class="market-matchup-title">{_format_nfl_matchup(game)}</div></div><div class="market-logos">{logos}</div></div>'
+        f'<div class="market-matchup-meta">📅 {game.get("game_date") or "Date TBD"} • ⏰ {game.get("game_time") or "Time TBD"}</div>'
+        f'<div class="market-matchup-meta">🏟️ {game.get("venue") or "Venue TBD"} • {game.get("location") or "Location TBD"}</div>'
+        '</div>'
+    )
 
 NFL_DEMO_SECTION_BLUEPRINT = [
     ("101", "Lower Bowl", 72),
@@ -1605,11 +1141,39 @@ def ensure_nfl_demo_inventory(db_path, schedule_games):
         columns = {row[1] for row in conn.execute("PRAGMA table_info(ticket_inventory)").fetchall()}
         if "team" not in columns:
             conn.execute("ALTER TABLE ticket_inventory ADD COLUMN team TEXT")
-            conn.execute(
-                "UPDATE ticket_inventory SET team='Atlanta Falcons' "
-                "WHERE team IS NULL OR TRIM(team)=''"
-            )
             columns.add("team")
+
+        # Migrate legacy rows without assuming a particular NFL club.
+        legacy_rows = conn.execute(
+            "SELECT id, week, opponent, game_date FROM ticket_inventory WHERE team IS NULL OR TRIM(team)=''"
+        ).fetchall()
+        for row_id, legacy_week, legacy_opponent, legacy_date in legacy_rows:
+            candidate_teams = []
+            week_key = _demo_normalize_week(legacy_week)
+            opponent_key = _nfl_full_team_name(legacy_opponent)
+            date_key = str(legacy_date or "")[:10]
+            for schedule_row in schedule_games:
+                if _demo_normalize_week(schedule_row.get("week")) != week_key:
+                    continue
+                for candidate in (schedule_row.get("team"), schedule_row.get("away_team"), schedule_row.get("home_team")):
+                    candidate = _nfl_full_team_name(candidate)
+                    if candidate not in NFL_TEAM_NAMES:
+                        continue
+                    if _nfl_full_team_name(schedule_row.get("opponent")) == opponent_key or _nfl_full_team_name(schedule_row.get("home_team")) == opponent_key or _nfl_full_team_name(schedule_row.get("away_team")) == opponent_key:
+                        if candidate not in candidate_teams:
+                            candidate_teams.append(candidate)
+            if date_key:
+                dated = [c for c in schedule_games if str(c.get("game_date") or "")[:10] == date_key and _nfl_full_team_name(c.get("opponent")) == opponent_key]
+                dated_teams = []
+                for c in dated:
+                    for candidate in (c.get("team"), c.get("home_team"), c.get("away_team")):
+                        candidate = _nfl_full_team_name(candidate)
+                        if candidate in NFL_TEAM_NAMES and candidate not in dated_teams:
+                            dated_teams.append(candidate)
+                if dated_teams:
+                    candidate_teams = dated_teams
+            if candidate_teams:
+                conn.execute("UPDATE ticket_inventory SET team=? WHERE id=?", (candidate_teams[0], row_id))
 
         required = {"id", "week", "opponent", "game_date", "section", "row", "price", "quantity"}
         if not required.issubset(columns):
@@ -1621,7 +1185,7 @@ def ensure_nfl_demo_inventory(db_path, schedule_games):
         existing_keys = set()
         for team, week, opponent, section, row in existing_rows:
             existing_keys.add((
-                _nfl_full_team_name(team or "Atlanta Falcons"),
+                _nfl_full_team_name(team) if team else "",
                 _demo_normalize_week(week),
                 str(opponent or "").strip().lower(),
                 str(section or "").strip(),
@@ -1785,159 +1349,6 @@ def _visual_game_date(value):
         return parsed.strftime("%b %d, %Y").replace(" 0", " ")
     except (ValueError, TypeError):
         return str(value)
-
-
-def render_home_matchup_card(game):
-    """Return a visual matchup card for a Falcons home-game baseline."""
-    opponent = str(game.get("opponent", "Opponent"))
-    week = game.get("week", "—")
-    game_date = _visual_game_date(game.get("game_date"))
-
-    falcons_logo = get_nfl_logo_url("Atlanta Falcons")
-    opponent_logo = get_nfl_logo_url(opponent)
-
-    if falcons_logo:
-        falcons_img = (
-            f'<img class="matchup-logo" src="{falcons_logo}" width="72" height="72" '
-            'loading="lazy" decoding="async" alt="Atlanta Falcons logo">'
-        )
-    else:
-        falcons_img = '<div class="logo-fallback" aria-label="Atlanta Falcons">ATL</div>'
-
-    if opponent_logo:
-        opponent_img = (
-            f'<img class="matchup-logo" src="{opponent_logo}" width="72" height="72" '
-            f'loading="lazy" decoding="async" alt="{opponent} logo">'
-        )
-    else:
-        opponent_img = f'<div class="logo-fallback" aria-label="{opponent}">NFL</div>'
-
-    return f'''
-    <article class="matchup-card" aria-label="Week {week}: Atlanta Falcons vs {opponent}">
-        <div class="matchup-topline">
-            <span>WEEK {week}</span>
-            <span>HOME</span>
-        </div>
-        <div class="matchup-teams">
-            <div class="matchup-team">
-                {falcons_img}
-                <div class="matchup-team-name">Falcons</div>
-            </div>
-            <div class="matchup-vs" aria-hidden="true">VS</div>
-            <div class="matchup-team">
-                {opponent_img}
-                <div class="matchup-team-name">{opponent}</div>
-            </div>
-        </div>
-        <div class="matchup-meta">
-            <span>📅 {game_date}</span>
-            <span>🏟️ Mercedes-Benz Stadium</span>
-        </div>
-    </article>
-    '''
-
-
-def render_schedule_matchup_card(game):
-    """Render a visual card for a home, away, or international game."""
-    opponent = str(game.get("opponent", "Opponent"))
-    week = game.get("week", "—")
-    game_date = _visual_game_date(game.get("game_date"))
-    is_home = bool(game.get("home_game"))
-    international = bool(game.get("international_game"))
-
-    if international:
-        status_label = "INTERNATIONAL"
-        venue_icon = "🌍"
-        connector = "VS"
-    elif is_home:
-        status_label = "HOME"
-        venue_icon = "🏟️"
-        connector = "VS"
-    else:
-        status_label = "AWAY"
-        venue_icon = "✈️"
-        connector = "AT"
-
-    falcons_logo = get_nfl_logo_url("Atlanta Falcons")
-    opponent_logo = get_nfl_logo_url(opponent)
-
-    if falcons_logo:
-        falcons_img = (
-            f'<img class="matchup-logo" src="{falcons_logo}" width="64" '
-            'height="64" loading="lazy" decoding="async" '
-            'alt="Atlanta Falcons logo">'
-        )
-    else:
-        falcons_img = '<div class="logo-fallback" aria-label="Atlanta Falcons">ATL</div>'
-
-    if opponent_logo:
-        opponent_img = (
-            f'<img class="matchup-logo" src="{opponent_logo}" width="64" '
-            'height="64" loading="lazy" decoding="async" '
-            f'alt="{opponent} logo">'
-        )
-    else:
-        opponent_img = f'<div class="logo-fallback" aria-label="{opponent}">NFL</div>'
-
-    if game.get("inventory_status") == "mbs_demo":
-        data_note = "MBS demo ticket inventory available"
-    else:
-        data_note = "Seat-level ticket inventory will be connected through Ticketmaster"
-
-    return f"""
-    <article class="matchup-card" aria-label="Week {week}: Atlanta Falcons {connector} {opponent}">
-        <div class="matchup-topline">
-            <span>WEEK {week}</span>
-            <span>{status_label}</span>
-        </div>
-        <div class="matchup-teams">
-            <div class="matchup-team">
-                {falcons_img}
-                <div class="matchup-team-name">Falcons</div>
-            </div>
-            <div class="matchup-vs" aria-hidden="true">{connector}</div>
-            <div class="matchup-team">
-                {opponent_img}
-                <div class="matchup-team-name">{opponent}</div>
-            </div>
-        </div>
-        <div class="matchup-meta">
-            <span>📅 {game_date}</span>
-            <span>{venue_icon} {game.get("venue", "Venue TBD")}</span>
-        </div>
-        <div class="matchup-status">{data_note}</div>
-    </article>
-    """
-
-
-def render_mbs_baseline_visual():
-    """Visual section baseline; it is not a live availability map."""
-    level_data = [
-        ("100 Level", "Lower Bowl", ["101", "102", "105", "116", "123", "125", "131", "133"]),
-        ("200 Level", "Upper Bowl", ["210", "220", "234", "245", "246", "247"]),
-        ("300 Level", "Upper Bowl", ["301", "310", "318", "333", "346"]),
-    ]
-
-    rows = []
-    for level, label, sections in level_data:
-        pills = "".join(
-            f'<span class="section-pill">{section}</span>'
-            for section in sections
-        )
-        rows.append(
-            '<div class="baseline-level">'
-            f'<div><strong>{level}</strong><span>{label}</span></div>'
-            f'<div class="baseline-pills">{pills}</div>'
-            '</div>'
-        )
-
-    return (
-        '<div class="mbs-visual" role="img" aria-label="Mercedes-Benz Stadium seating baseline showing 100, 200, and 300 level sections">'
-        '<div class="mbs-field">FIELD / PLAYING SURFACE</div>'
-        + "".join(rows)
-        + '<div class="mbs-note">Section layout baseline • not live Ticketmaster availability</div>'
-        '</div>'
-    )
 
 
 # ============================================================
@@ -2435,9 +1846,7 @@ try:
         MASTER_DATA_PATH
     )
 
-    # Use the league-wide schedule as the source of truth. The old local
-    # Falcons schedule remains only as legacy data and is not used by the
-    # active platform.
+    # Use the league-wide schedule as the source of truth.
     nfl_schedule_now = get_nfl_schedule_games()
     if isinstance(master_dataset, dict) and nfl_schedule_now:
         master_dataset["games"] = nfl_schedule_now
@@ -3616,398 +3025,6 @@ def get_deal_assessment(
 # VALUE / UI HELPERS
 # ============================================================
 
-def get_game_selector_options():
-    """Return the available NFL schedule as physical matchups for legacy controls."""
-    games = []
-    seen = set()
-    for raw in get_nfl_schedule_games():
-        if not isinstance(raw, dict):
-            continue
-        game_id = str(raw.get("game_id") or "").strip()
-        if not game_id:
-            game_id = f"{raw.get('week')}|{raw.get('away_team')}|{raw.get('home_team')}"
-        if game_id in seen:
-            continue
-        seen.add(game_id)
-        if raw.get("away_team") and raw.get("home_team"):
-            game = dict(raw)
-            game.update({
-                "team": _nfl_full_team_name(raw.get("home_team")),
-                "opponent": _nfl_full_team_name(raw.get("away_team")),
-                "home_game": True,
-                "selected_team_home": True,
-                "matchup": f"{raw.get('home_team')} vs {raw.get('away_team')}",
-            })
-        else:
-            game = dict(raw)
-        games.append(game)
-    games.sort(key=lambda game: (normalize_week(game.get("week")) or 999, str(game.get("game_date") or "9999")))
-    return games
-
-
-
-# ============================================================
-# PERSONALIZED GAME FINDER
-# ============================================================
-
-# Broad planning-distance estimates from Atlanta. These are deliberately
-# approximate preference bands, not navigation or routing estimates.
-GAME_TRAVEL_MILES_FROM_ATLANTA = {
-    "Pittsburgh Steelers": 690,
-    "Carolina Panthers": 245,
-    "Green Bay Packers": 820,
-    "New Orleans Saints": 470,
-    "Baltimore Ravens": 700,
-    "Chicago Bears": 715,
-    "San Francisco 49ers": 2470,
-    "Tampa Bay Buccaneers": 460,
-    "Cincinnati Bengals": 4600,
-    "Kansas City Chiefs": 800,
-    "Minnesota Vikings": 900,
-    "Detroit Lions": 730,
-    "Cleveland Browns": 700,
-    "Washington Commanders": 650,
-}
-
-
-def get_game_price_stats(week, team=None, opponent=None, game_date=None):
-    prices = []
-    target_team = _nfl_full_team_name(team) if team else None
-    target_opponent = _nfl_full_team_name(opponent) if opponent else None
-    target_date = str(game_date or "").strip()[:10]
-
-    for ticket in inventory:
-        if normalize_week(ticket.get("week")) != normalize_week(week):
-            continue
-        if int(ticket.get("available_quantity", 0)) <= 0:
-            continue
-        if float(ticket.get("price", 0)) <= 0:
-            continue
-
-        if target_team and target_opponent:
-            ticket_team = _nfl_full_team_name(ticket.get("team"))
-            ticket_opponent = _nfl_full_team_name(ticket.get("opponent"))
-            direct = ticket_team == target_team and ticket_opponent == target_opponent
-            reverse = ticket_team == target_opponent and ticket_opponent == target_team
-            if not (direct or reverse):
-                continue
-
-        if target_date and str(ticket.get("game_date") or "").strip()[:10] not in {"", target_date}:
-            continue
-
-        prices.append(float(ticket.get("price", 0)))
-
-    if not prices:
-        return None
-
-    return {
-        "lowest": min(prices),
-        "median": statistics.median(prices),
-        "highest": max(prices),
-        "sample_size": len(prices),
-    }
-
-
-def get_game_area_availability(week, preferred_area):
-    if preferred_area == "No preference":
-        return 100
-
-    matches = 0
-
-    for ticket in inventory:
-        if normalize_week(ticket.get("week")) != normalize_week(week):
-            continue
-        if int(ticket.get("available_quantity", 0)) <= 0:
-            continue
-
-        section = str(ticket.get("section", ""))
-        section_upper = section.upper()
-        section_number = get_section_number(section)
-
-        if preferred_area == "Club / Premium":
-            is_match = (
-                "C" in section_upper
-                or "LFT" in section_upper
-                or "CLUB" in section_upper
-            )
-        elif preferred_area == "Lower Bowl":
-            is_match = (
-                section_number is not None
-                and 101 <= section_number <= 134
-                and "C" not in section_upper
-            )
-        elif preferred_area == "Upper Bowl":
-            is_match = (
-                section_number is not None
-                and section_number >= 200
-            )
-        else:
-            is_match = False
-
-        if is_match:
-            matches += 1
-
-    if matches:
-        return 100
-
-    # Away games currently have schedule-level data only. Do not claim a
-    # seat-area preference is unavailable until live seat data exists.
-    return 60
-
-
-def calculate_travel_fit(game, travel_preference):
-    """Broad travel preference signal; intentionally not a routing/distance estimate."""
-    home = bool(game.get("home_game"))
-    international = bool(game.get("international_game"))
-
-    if travel_preference == "Home area only":
-        return 100 if home else 0
-
-    if travel_preference == "Up to 500 miles":
-        if home:
-            return 100
-        return 35 if international else 70
-
-    if travel_preference == "Up to 1,000 miles":
-        if home:
-            return 100
-        return 45 if international else 82
-
-    if travel_preference == "Anywhere in the U.S.":
-        if international:
-            return 20
-        return 100 if home else 92
-
-    if travel_preference == "Anywhere, including international":
-        return 100
-
-    return 70
-
-
-def calculate_fan_type_fit(game, fan_type):
-    opponent = game.get("opponent", "")
-    home = bool(game.get("home_game"))
-    rival = is_division_rival(game)
-    quality = calculate_game_score(game)
-
-    if fan_type == "Team-first fan":
-        return 100 if home else 65
-
-    if fan_type == "Rivalry fan":
-        return 100 if rival else 45
-
-    if fan_type == "Big matchup / star-game fan":
-        return quality
-
-    if fan_type == "Casual / social fan":
-        return 95 if home and quality >= 70 else 70
-
-    if fan_type == "Road-trip fan":
-        return 100 if not home else 45
-
-    return 60
-
-
-def calculate_vibe_fit(game, vibe):
-    opponent = game.get("opponent", "")
-    quality = calculate_game_score(game)
-
-    if vibe == "Rivalry atmosphere":
-        return 100 if is_division_rival(game) else 45
-
-    if vibe == "Elite opponent / marquee matchup":
-        return quality
-
-    if vibe == "Affordable / value-focused":
-        stats = get_game_price_stats(game.get("week"), game.get("team"), game.get("opponent"), game.get("game_date"))
-        if not stats:
-            return 60
-        return round(max(0, min(100, 115 - stats["median"] * 0.65)))
-
-    if vibe == "Home-field experience":
-        return 100 if game.get("home_game") else 40
-
-    if vibe == "Unique travel experience":
-        return 100 if game.get("international_game") else (90 if not game.get("home_game") else 40)
-
-    return 65
-
-
-def calculate_budget_fit(game, budget_band):
-    limits = {
-        "Under $75/ticket": 75,
-        "$75–$125/ticket": 125,
-        "$125–$200/ticket": 200,
-        "$200+/ticket": 9999,
-    }
-
-    limit = limits[budget_band]
-    stats = get_game_price_stats(game.get("week"), game.get("team"), game.get("opponent"), game.get("game_date"))
-
-    if not stats:
-        return 60
-
-    if stats["lowest"] <= limit and stats["median"] <= limit:
-        return 100
-
-    if stats["lowest"] <= limit:
-        return 75
-
-    distance = (stats["lowest"] - limit) / max(stats["lowest"], 1)
-    return round(max(10, 100 - distance * 100))
-
-
-def calculate_home_away_fit(game, preference):
-    home = bool(game.get("home_game"))
-
-    if preference == "Prefer home games":
-        return 100 if home else 35
-
-    if preference == "Either home or away":
-        return 90
-
-    if preference == "Prefer away games":
-        return 100 if not home else 40
-
-    return 70
-
-
-def score_personalized_game(game, preferences):
-    components = {
-        "fan": calculate_fan_type_fit(game, preferences["fan_type"]),
-        "travel": calculate_travel_fit(game, preferences["travel"]),
-        "vibe": calculate_vibe_fit(game, preferences["vibe"]),
-        "budget": calculate_budget_fit(game, preferences["budget"]),
-        "area": get_game_area_availability(game.get("week"), preferences["area"]),
-        "home_away": calculate_home_away_fit(game, preferences["home_away"]),
-    }
-
-    score = (
-        components["fan"] * 0.25
-        + components["travel"] * 0.20
-        + components["vibe"] * 0.20
-        + components["budget"] * 0.15
-        + components["area"] * 0.10
-        + components["home_away"] * 0.10
-    )
-
-    return round(score), components
-
-
-def get_personalized_game_reasons(game, preferences, components):
-    reasons = []
-    opponent = game.get("opponent", "this opponent")
-
-    if components["fan"] >= 80:
-        if preferences["fan_type"] == "Rivalry fan":
-            reasons.append(f"The {opponent} matchup fits your rivalry-focused fan profile.")
-        elif preferences["fan_type"] == "Road-trip fan":
-            reasons.append("This game fits your road-trip preference.")
-        elif preferences["fan_type"] == "Team-first fan":
-            reasons.append("This is a home game, matching your team-first preference.")
-        elif preferences["fan_type"] == "Big matchup / star-game fan":
-            reasons.append("The opponent gives this game strong matchup appeal.")
-        else:
-            reasons.append("The matchup fits the fan profile you selected.")
-
-    if components["travel"] >= 80:
-        reasons.append("The travel distance fits the range you selected.")
-
-    if components["vibe"] >= 80:
-        reasons.append(f"It matches your preferred game vibe: {preferences['vibe']}.")
-
-    if components["budget"] >= 80:
-        if get_game_price_stats(game.get("week")):
-            reasons.append("The demo ticket pricing fits your selected budget range.")
-        else:
-            reasons.append("The game is being considered without live seat-level price data yet.")
-
-    return reasons[:3] or [
-        "This game produced the strongest overall match across your selected preferences."
-    ]
-
-
-def get_personalized_game_recommendations(preferences):
-    results = []
-
-    for game in FULL_FALCONS_2026_SCHEDULE:
-        if game.get("bye"):
-            continue
-
-        score, components = score_personalized_game(game, preferences)
-
-        results.append({
-            "game": game,
-            "score": score,
-            "components": components,
-            "reasons": get_personalized_game_reasons(
-                game,
-                preferences,
-                components,
-            ),
-        })
-
-    results.sort(
-        key=lambda item: (
-            item["score"],
-            calculate_game_score(item["game"]),
-        ),
-        reverse=True,
-    )
-
-    return results
-
-
-def select_interactive_ticket_options(candidates, limit=4):
-    """
-    Select a small set of ticket listings for the interactive comparison area.
-
-    When the user is looking at all games, prioritize different games so the
-    four visible options represent the broader home-game inventory instead of
-    four nearly identical listings from one matchup. When a specific game is
-    selected, the function naturally returns multiple tickets from that game.
-    """
-    if not candidates:
-        return []
-
-    selected = [candidates[0]]
-    seen_weeks = {
-        normalize_week(candidates[0]["ticket"].get("week"))
-    }
-
-    # First pass: one strong ticket from each different game.
-    for candidate in candidates[1:]:
-        if len(selected) >= limit:
-            break
-
-        week = normalize_week(
-            candidate["ticket"].get("week")
-        )
-
-        if week not in seen_weeks:
-            selected.append(candidate)
-            seen_weeks.add(week)
-
-    # Second pass: fill any remaining slots with the next best listings.
-    if len(selected) < limit:
-        selected_ids = {
-            candidate["ticket"].get("id")
-            for candidate in selected
-        }
-
-        for candidate in candidates:
-            if len(selected) >= limit:
-                break
-
-            candidate_id = candidate["ticket"].get("id")
-
-            if candidate_id not in selected_ids:
-                selected.append(candidate)
-                selected_ids.add(candidate_id)
-
-    return selected[:limit]
-
-
 def get_price_benchmark(ticket):
     comparable = [
         float(t.get("price", 0))
@@ -4235,7 +3252,7 @@ def get_schematic_seat_map_svg(ticket):
     ]
 
     # Emphasize the recommended zone without pretending the schematic is an
-    # exact Mercedes-Benz Stadium map.
+    # exact real-world stadium map.
     lower_opacity = "1" if area == "Lower Bowl" else ".28"
     upper_opacity = "1" if area == "Upper Bowl" else ".28"
 
@@ -4257,7 +3274,7 @@ def get_schematic_seat_map_svg(ticket):
             </text>
             <text x="150" y="174" text-anchor="middle"
                   fill="white" font-size="9">
-                ATLANTA
+                HOME VENUE
             </text>
 
             <circle cx="150" cy="160" r="118"
@@ -4286,25 +3303,27 @@ def get_schematic_seat_map_svg(ticket):
     """
 
 
-def render_interactive_mbs_map(ticket, game, ticket_count):
-    """Render a real in-app, clickable section explorer for Mercedes-Benz Stadium demo inventory."""
-    venue = str(game.get("venue", ""))
-    if venue != "Mercedes-Benz Stadium":
-        st.info(
-            f"🗺️ Interactive seating for {venue or 'this venue'} will activate when venue-specific seat data is connected. "
-            "For now, KickSeatz shows the venue details on the ticket itself without inventing a stadium map."
-        )
-        return
+def render_interactive_stadium_map(ticket, game, ticket_count=1):
+    """Render an interactive demo section map for any NFL matchup.
 
-    game_week = normalize_week(ticket.get("week"))
+    The map is intentionally schematic: it is a product prototype based on
+    the synthetic section blueprint, not a claim about exact real-world seat
+    geometry or live availability.
+    """
+    game_week = normalize_week(ticket.get("week") if ticket else game.get("week"))
+    game_team = _nfl_full_team_name(game.get("team"))
+    game_opponent = _nfl_full_team_name(game.get("opponent"))
+
     section_inventory = [
         item for item in inventory
         if normalize_week(item.get("week")) == game_week
         and int(item.get("available_quantity", 0)) >= int(ticket_count)
+        and _nfl_full_team_name(item.get("team")) == game_team
+        and _nfl_full_team_name(item.get("opponent")) == game_opponent
     ]
 
     if not section_inventory:
-        st.info("No section-level demo inventory is available for this matchup yet.")
+        st.info("No demo section inventory is available for this matchup yet.")
         return
 
     section_names = sorted(
@@ -4312,46 +3331,38 @@ def render_interactive_mbs_map(ticket, game, ticket_count):
         key=lambda value: int("".join(ch for ch in value if ch.isdigit()) or 9999),
     )
 
-    by_level = {"100 Level": [], "200 Level": [], "300 Level": []}
-    for section_name in section_names:
-        number = get_section_number(section_name)
-        if number is not None and 101 <= number <= 199:
-            by_level["100 Level"].append(section_name)
-        elif number is not None and 200 <= number <= 299:
-            by_level["200 Level"].append(section_name)
-        elif number is not None and number >= 300:
-            by_level["300 Level"].append(section_name)
-
-    st.markdown("**Choose a section**")
-    st.caption(
-        "This is a clickable section map built from KickSeatz's MBS seating baseline. "
-        "Selecting a section filters the ticket choices below."
-    )
-
-    current_section = str(st.session_state.get("kz_map_section", ticket.get("section", "")))
+    current_section = str(st.session_state.get("kz_map_section", ticket.get("section", "") if ticket else ""))
     if current_section not in section_names:
         current_section = section_names[0]
         st.session_state["kz_map_section"] = current_section
 
-    # Stadium presentation: field in the center, section buttons by level.
+    st.markdown("### 🗺️ Choose a section")
+    st.caption(
+        f"Interactive demo seating for {game.get('venue', 'this venue')} • "
+        "section shapes are schematic and inventory is synthetic."
+    )
     st.markdown(
-        '<div class="interactive-map-field">🏈 FIELD • ATLANTA</div>',
+        '<div class="interactive-map-field">🏈 FIELD / PLAYING SURFACE</div>',
         unsafe_allow_html=True,
     )
 
-    for level_name, levels in by_level.items():
-        if not levels:
+    levels = {"Lower Bowl": [], "Upper Bowl": []}
+    for section_name in section_names:
+        area = get_seat_area(section_name)
+        levels.setdefault(area if area in levels else "Upper Bowl", []).append(section_name)
+
+    for level_name, sections in levels.items():
+        if not sections:
             continue
-        st.markdown(f'<div class="map-level-label">{level_name}</div>', unsafe_allow_html=True)
-        columns = st.columns(min(8, max(1, len(levels))))
-        for index, section_name in enumerate(levels):
+        st.markdown(f"**{level_name}**")
+        columns = st.columns(min(6, max(1, len(sections))))
+        for index, section_name in enumerate(sections):
             with columns[index % len(columns)]:
                 if st.button(
-                    f"{section_name}",
-                    key=f"kz_interactive_map_{game_week}_{level_name}_{section_name}",
+                    section_name,
+                    key=f"kz_map_{game.get('game_id')}_{level_name}_{section_name}",
                     use_container_width=True,
                     type="primary" if current_section == section_name else "secondary",
-                    help=f"View available demo tickets in Section {section_name}",
                 ):
                     st.session_state["kz_map_section"] = section_name
                     st.session_state.pop("kz_selected_ticket_id", None)
@@ -4359,37 +3370,21 @@ def render_interactive_mbs_map(ticket, game, ticket_count):
 
     selected_rows = [
         item for item in section_inventory
-        if str(item.get("section")) == str(current_section)
+        if str(item.get("section")) == current_section
     ]
 
-    st.markdown(
-        f"### Section {current_section}",
-    )
-    st.caption(
-        f"{len(selected_rows)} demo listing(s) currently loaded for this section • Mercedes-Benz Stadium"
-    )
-
+    st.markdown(f"**Section {current_section}**")
+    st.caption(f"{len(selected_rows)} synthetic listing(s) in this section")
     for option_index, section_ticket in enumerate(selected_rows[:6], start=1):
-        cols = st.columns([2.2, 1, 1.2, 1.1])
+        cols = st.columns([2.2, 1, 1, 1])
         with cols[0]:
-            st.markdown(
-                f"**Section {section_ticket.get('section')} • Row {section_ticket.get('row')}**"
-            )
+            st.write(f"Section {section_ticket.get('section')} • Row {section_ticket.get('row')}")
         with cols[1]:
-            st.markdown(
-                f'<div class="market-price">${float(section_ticket.get("price", 0)):.0f}</div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(f"**${float(section_ticket.get('price', 0)):.0f}**")
         with cols[2]:
-            st.caption(
-                f"{int(section_ticket.get('available_quantity', 0))} available"
-            )
+            st.caption(f"{int(section_ticket.get('available_quantity', 0))} available")
         with cols[3]:
-            if st.button(
-                "View ticket",
-                key=f"kz_interactive_map_ticket_{section_ticket.get('id')}_{option_index}",
-                use_container_width=True,
-            ):
+            if st.button("Select", key=f"kz_map_select_{section_ticket.get('id')}_{option_index}", use_container_width=True):
                 st.session_state["kz_selected_ticket_id"] = section_ticket.get("id")
                 st.rerun()
 
@@ -4958,7 +3953,7 @@ def render_platform_profile():
             )
 
             location = st.text_input(
-                "Your city or ZIP code",
+                "Home city or ZIP code",
                 value=str(preferences.get("location", "")),
                 placeholder="Example: City or ZIP code",
                 help="Use a city or ZIP code. KickSeatz does not need your street address.",
@@ -5355,6 +4350,38 @@ def _get_ticket_inventory_for_game(team, game, budget=None, ticket_count=1):
 
     return matches
 
+def calculate_travel_fit(game, travel_preference):
+    """Estimate travel fit without assuming one NFL team's home city."""
+    preference = str(travel_preference or "Anywhere, including international")
+    is_home = bool(game.get("home_game"))
+    is_international = bool(game.get("international_game") or game.get("neutral_site"))
+
+    limits = {
+        "Home area": 0,
+        "Up to 500 miles": 500,
+        "Up to 1,000 miles": 1000,
+        "Anywhere in the U.S.": 3000,
+        "Anywhere, including international": 10000,
+    }
+    limit = limits.get(preference, 10000)
+
+    if is_home:
+        miles = 0
+    elif is_international:
+        miles = 4500
+    else:
+        # The schedule layer may provide a better estimate; otherwise use a
+        # neutral domestic away-game estimate instead of hard-coding Atlanta.
+        miles = float(game.get("travel_miles") or 1000)
+
+    if miles <= limit:
+        return 100
+    if limit == 0:
+        return 0
+    excess_ratio = (miles - limit) / max(miles, 1)
+    return round(max(0, 100 - excess_ratio * 100))
+
+
 def _generic_game_match_score(game, favorite_team, favorite_opponents, home_away, vibe, travel="Anywhere, including international"):
     score = 55.0
     reasons = []
@@ -5649,6 +4676,31 @@ def render_platform_find_tickets():
                     st.success("Ticket selected.")
     st.caption("Connected listings are separate from the NFL schedule feed. Demonstration/local inventory is labeled by source.")
 
+    selected_ticket_id = st.session_state.get("kz_selected_ticket_id")
+    selected_ticket = next((x for x in matches if int(x.get("id", -1)) == int(selected_ticket_id)) if selected_ticket_id is not None else None, None)
+    if selected_ticket:
+        st.markdown("### Ticket details")
+        detail_left, detail_right = st.columns([2.4, 1])
+        with detail_left:
+            st.markdown(f"**{_format_nfl_matchup(selected_game)}**")
+            st.write(f"Section **{selected_ticket.get('section')}** • Row **{selected_ticket.get('row')}** • ${float(selected_ticket.get('price', 0)):.0f}/ticket")
+            st.caption("Synthetic demo listing • not live availability")
+        with detail_right:
+            ticket_score = calculate_ticket_score(selected_ticket, selected_game, budget, ticket_count, priority)
+            st.metric("KickSeatz Score", f"{ticket_score}/100")
+            target = st.number_input("Price Watch target", min_value=1.0, max_value=float(max(1, selected_ticket.get("price", 1))), value=float(selected_ticket.get("price", 1)), step=5.0, key=f"kz_watch_target_{selected_ticket.get('id')}")
+            if st.button("🔔 Add Price Watch", use_container_width=True, key=f"kz_add_watch_{selected_ticket.get('id')}"):
+                set_price_watch(int(selected_ticket.get("id")), float(target))
+                st.success("Price Watch saved. Find it under My Tickets.")
+
+        with st.expander("🔎 Explain Why this ticket scored this way"):
+            st.write(f"**Game:** {calculate_game_score(selected_game)}/100")
+            st.write(f"**Price:** {calculate_price_score(float(selected_ticket.get('price', 0)), [float(x.get('price', 0)) for x in matches if x.get('id') != selected_ticket.get('id')])}/100")
+            st.write(f"**Seat:** {calculate_seat_quality(selected_ticket)}/100")
+            st.write(f"**Availability:** {calculate_availability(selected_ticket, ticket_count)}/100")
+
+    render_interactive_stadium_map(matches[0] if matches else None, selected_game, ticket_count)
+
 def render_platform_rate_ticket():
     st.markdown("## 🧾 Rate My Ticket")
     st.write("Rate a KickSeatz listing or enter a ticket you already bought for any NFL matchup.")
@@ -5780,2428 +4832,3 @@ if current_platform_page == "my_tickets":
 if current_platform_page == "profile":
     render_platform_profile()
     st.stop()
-
-st.caption(
-    "KickSeatz marketplace mode • 32-team NFL schedule • demo inventory + Ticketmaster Discovery"
-)
-
-# HERO
-# ============================================================
-
-st.markdown("""
-<div class="hero">
-    <h1>🏟️ KickSeatz</h1>
-    <p><b>Smart Sports Ticket Finder</b></p>
-    <p class="tagline">
-        Stop scrolling through hundreds of tickets. Find the one
-        that makes the most sense for you.
-    </p>
-</div>
-""", unsafe_allow_html=True)
-
-# ============================================================
-# FULL SEASON SCHEDULE VISUALS
-# ============================================================
-
-full_schedule_visuals = get_game_selector_options()
-home_visual_games = [
-    game
-    for game in full_schedule_visuals
-    if game.get("inventory_status") == "mbs_demo"
-]
-away_visual_games = [
-    game
-    for game in full_schedule_visuals
-    if not game.get("home_game") or game.get("international_game")
-]
-
-if home_visual_games:
-    st.markdown(
-        '<h2 class="section-title">🏟️ Mercedes-Benz Stadium Home Games</h2>',
-        unsafe_allow_html=True,
-    )
-
-    for start in range(0, len(home_visual_games), 2):
-        pair = home_visual_games[start:start + 2]
-        columns = st.columns(len(pair))
-        for column, matchup in zip(columns, pair):
-            with column:
-                st.markdown(
-                    render_home_matchup_card(matchup),
-                    unsafe_allow_html=True,
-                )
-
-if away_visual_games:
-    st.markdown(
-        '<h2 class="section-title">✈️ Away & International Schedule</h2>',
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        "All non-MBS games are shown as schedule/venue records. We are not fabricating "
-        "away stadium maps or current seat availability; live Ticketmaster inventory "
-        "will plug into the same recommendation engine later."
-    )
-
-    for start in range(0, len(away_visual_games), 2):
-        pair = away_visual_games[start:start + 2]
-        columns = st.columns(len(pair))
-        for column, matchup in zip(columns, pair):
-            with column:
-                st.markdown(
-                    render_schedule_matchup_card(matchup),
-                    unsafe_allow_html=True,
-                )
-
-
-# ============================================================
-# PERSONALIZED GAME QUIZ
-# ============================================================
-
-with st.expander("🎯 Find My Ideal Game", expanded=False):
-    st.write(
-        "Answer a few questions and KickSeatz will match you with the game "
-        "that best fits your fan profile, travel, budget, seat area, and game vibe."
-    )
-
-    q1, q2 = st.columns(2)
-
-    with q1:
-        quiz_fan_type = st.selectbox(
-            "What type of fan are you?",
-            [
-                "Team-first fan",
-                "Rivalry fan",
-                "Big matchup / star-game fan",
-                "Casual / social fan",
-                "Road-trip fan",
-            ],
-            key="quiz_fan_type",
-        )
-
-        quiz_travel = st.selectbox(
-            "How far are you willing to travel?",
-            [
-                "Home area only",
-                "Up to 500 miles",
-                "Up to 1,000 miles",
-                "Anywhere in the U.S.",
-                "Anywhere, including international",
-            ],
-            key="quiz_travel",
-        )
-
-        quiz_area = st.selectbox(
-            "What seat area do you prefer?",
-            [
-                "No preference",
-                "Lower Bowl",
-                "Upper Bowl",
-                "Club / Premium",
-            ],
-            key="quiz_area",
-        )
-
-    with q2:
-        quiz_vibe = st.selectbox(
-            "What kind of game experience do you want?",
-            [
-                "Rivalry atmosphere",
-                "Elite opponent / marquee matchup",
-                "Affordable / value-focused",
-                "Home-field experience",
-                "Unique travel experience",
-            ],
-            key="quiz_vibe",
-        )
-
-        quiz_budget = st.selectbox(
-            "What's your ticket budget?",
-            [
-                "Under $75/ticket",
-                "$75–$125/ticket",
-                "$125–$200/ticket",
-                "$200+/ticket",
-            ],
-            key="quiz_budget",
-        )
-
-        quiz_home_away = st.selectbox(
-            "Home or away?",
-            [
-                "Prefer home games",
-                "Either home or away",
-                "Prefer away games",
-            ],
-            key="quiz_home_away",
-        )
-
-    quiz_preferences = {
-        "fan_type": quiz_fan_type,
-        "travel": quiz_travel,
-        "area": quiz_area,
-        "vibe": quiz_vibe,
-        "budget": quiz_budget,
-        "home_away": quiz_home_away,
-    }
-
-    personalized_results = get_personalized_game_recommendations(
-        quiz_preferences
-    )
-
-    if personalized_results:
-        ideal = personalized_results[0]
-        ideal_game = ideal["game"]
-        ideal_week = ideal_game.get("week")
-        matchup_word = (
-            "vs"
-            if ideal_game.get("home_game") or ideal_game.get("international_game")
-            else "at"
-        )
-
-        st.success(
-            f"🎯 Your Ideal Game: Week {ideal_week} • "
-            f"{ideal_game.get('team', 'NFL Team')} {matchup_word} {ideal_game.get('opponent')} • "
-            f"{ideal_game.get('venue', 'Venue TBD')}"
-        )
-
-        result_left, result_right = st.columns([3, 1])
-
-        with result_left:
-            for reason in ideal["reasons"]:
-                st.write(f"• {reason}")
-
-            st.caption(
-                f"{ideal_game.get('game_date') or 'Date TBD'} • "
-                f"{ideal_game.get('location', 'Location TBD')}"
-            )
-
-        with result_right:
-            st.metric("Preference Match", f"{ideal['score']}/100")
-
-        if st.button(
-            "Use this game in Ticket Finder",
-            key="apply_personalized_game",
-            use_container_width=True,
-        ):
-            st.session_state["quiz_game_week"] = ideal_week
-            st.rerun()
-
-        with st.expander("See your next 2 matches"):
-            for result in personalized_results[1:3]:
-                game = result["game"]
-                matchup_word = (
-                    "vs"
-                    if game.get("home_game") or game.get("international_game")
-                    else "at"
-                )
-                st.write(
-                    f"**{result['score']}/100** • Week {game.get('week')} • "
-                    f"{game.get('team', 'NFL Team')} {matchup_word} {game.get('opponent')}"
-                )
-
-        st.caption(
-            "The quiz is a preference-matching tool, not a game-outcome prediction. "
-            "Away games currently have schedule-level data rather than live seat inventory."
-        )
-
-
-# ============================================================
-# SIDEBAR
-# ============================================================
-
-st.sidebar.header(
-    "🎟️ Find Your Ticket"
-)
-
-budget = st.sidebar.slider(
-    "Maximum budget per ticket",
-    min_value=40,
-    max_value=200,
-    value=100,
-    step=5,
-)
-
-ticket_count = st.sidebar.selectbox(
-    "Number of tickets",
-    [1, 2, 3, 4],
-    index=1,
-)
-
-total_budget = budget * ticket_count
-st.sidebar.caption(
-    f"Maximum group spend: ${total_budget:.0f}"
-)
-
-
-priority = st.sidebar.radio(
-    "What matters most?",
-    [
-        "Best Overall Value",
-        "Lowest Price",
-        "Best Game",
-        "Best Seats",
-        "Custom Mix",
-    ],
-)
-
-if priority == "Custom Mix":
-    st.sidebar.markdown("**Customize your scoring mix**")
-    custom_game_weight = st.sidebar.slider(
-        "Game Quality",
-        min_value=0,
-        max_value=100,
-        value=40,
-        step=5,
-        key="custom_game_weight",
-    )
-    custom_price_weight = st.sidebar.slider(
-        "Price",
-        min_value=0,
-        max_value=100,
-        value=25,
-        step=5,
-        key="custom_price_weight",
-    )
-    custom_seat_weight = st.sidebar.slider(
-        "Seat Quality",
-        min_value=0,
-        max_value=100,
-        value=20,
-        step=5,
-        key="custom_seat_weight",
-    )
-    custom_availability_weight = st.sidebar.slider(
-        "Availability",
-        min_value=0,
-        max_value=100,
-        value=15,
-        step=5,
-        key="custom_availability_weight",
-    )
-
-    WEIGHTS["Custom Mix"] = normalize_weights(
-        [
-            custom_game_weight,
-            custom_price_weight,
-            custom_seat_weight,
-            custom_availability_weight,
-        ]
-    )
-
-    st.sidebar.caption(
-        "Weights are automatically normalized to 100%."
-    )
-
-selector_games = get_game_selector_options()
-game_selector_labels = ["All 2026 Falcons Games"] + [
-    (
-        f"Week {g.get('week')} • "
-        f"{'vs' if g.get('home_game') or g.get('international_game') else 'at'} "
-        f"{g.get('opponent')} • "
-        f"{g.get('game_date') or 'Date TBD'} • "
-        f"{g.get('venue', 'Venue TBD')}"
-    )
-    for g in selector_games
-]
-
-quiz_week = st.session_state.get("quiz_game_week")
-quiz_default_index = 0
-if quiz_week is not None:
-    for selector_index, selector_game in enumerate(
-        selector_games,
-        start=1,
-    ):
-        if normalize_week(selector_game.get("week")) == normalize_week(quiz_week):
-            quiz_default_index = selector_index
-            break
-
-selected_game_label = st.sidebar.selectbox(
-    "Game",
-    game_selector_labels,
-    index=quiz_default_index,
-)
-
-selected_week = None
-if selected_game_label != "All 2026 Falcons Games":
-    selected_index = game_selector_labels.index(selected_game_label) - 1
-    selected_week = selector_games[selected_index].get("week")
-
-st.sidebar.markdown("**Advanced Filters**")
-
-seat_area_filter = st.sidebar.selectbox(
-    "Seat area",
-    [
-        "Any",
-        "Lower Bowl",
-        "Upper Bowl",
-        "Other",
-    ],
-    index=0,
-    help="Uses KickSeatz's section-numbering heuristic."
-)
-
-min_seat_quality = st.sidebar.slider(
-    "Minimum seat quality",
-    min_value=0,
-    max_value=100,
-    value=0,
-    step=5,
-    help="Filters tickets using KickSeatz's section/row seat-quality model."
-)
-
-rivals_only = st.sidebar.checkbox(
-    "Division rivals only",
-    value=False,
-    help="Only show Carolina, New Orleans, or Tampa Bay matchups."
-)
-
-st.sidebar.divider()
-st.sidebar.caption(
-    "KickSeatz MVP • NFL 2026"
-)
-st.sidebar.caption(
-    "Ticketmaster event data refreshes through a 5-minute cache."
-)
-
-if st.sidebar.button(
-    "🔄 Refresh live data",
-    use_container_width=True,
-    help="Clear cached API data and reload the app."
-):
-    clear_app_cache_and_rerun()
-
-# ============================================================
-# CANDIDATES
-# ============================================================
-
-eligible_tickets = get_eligible_tickets(
-    budget,
-    ticket_count,
-    selected_week,
-    seat_area_filter,
-    min_seat_quality,
-    rivals_only,
-)
-
-candidates = score_candidates(
-    budget,
-    ticket_count,
-    priority,
-    selected_week,
-    seat_area_filter,
-    min_seat_quality,
-    rivals_only,
-)
-
-# ============================================================
-# TOP METRICS
-# ============================================================
-
-m1, m2, m3, m4 = st.columns(4)
-
-with m1:
-    st.metric(
-        "Budget",
-        f"${budget}"
-    )
-
-with m2:
-    st.metric(
-        "Tickets",
-        ticket_count
-    )
-
-with m3:
-    st.metric(
-        "Eligible Options",
-        len(eligible_tickets)
-    )
-
-with m4:
-    st.metric(
-        "Priority",
-        priority
-    )
-
-if selected_week is not None:
-    selected_game = get_game_by_week(selected_week)
-    if selected_game:
-        connector = "vs" if selected_game.get("home_game") or selected_game.get("international_game") else "at"
-        st.info(
-            f"Game filter active: Week {selected_week} • {selected_game.get("team", "NFL Team")} {connector} "
-            f"{selected_game.get('opponent', 'Unknown opponent')} • "
-            f"{selected_game.get('venue', 'Venue TBD')}"
-        )
-
-# ============================================================
-# NO RESULTS
-# ============================================================
-
-if not candidates:
-
-    selected_game = get_game_by_week(selected_week) if selected_week is not None else None
-
-    if selected_game and selected_game.get("inventory_status") != "mbs_demo":
-        st.info(
-            f"Week {selected_week} is in the NFL schedule, but seat-level inventory is not loaded "
-            f"for {selected_game.get('venue', 'this venue')} yet. The recommendation engine is ready "
-            "to use live ticket data when it is connected."
-        )
-    else:
-        st.error(
-            "No tickets currently fit your requirements."
-        )
-
-    valid_prices = [
-        t["price"]
-        for t in inventory
-        if t["available_quantity"] >= ticket_count
-        and (
-            selected_week is None
-            or normalize_week(t.get("week")) == normalize_week(selected_week)
-        )
-        and (
-            seat_area_filter == "Any"
-            or get_seat_area(t.get("section")) == seat_area_filter
-        )
-        and calculate_seat_quality(t) * 10 >= int(min_seat_quality)
-        and (
-            not rivals_only
-            or t.get("opponent") in DIVISION_RIVALS
-        )
-    ]
-
-    if valid_prices:
-
-        cheapest = min(valid_prices)
-
-        st.info(
-            f"The cheapest available option for "
-            f"{ticket_count} ticket(s) is "
-            f"${cheapest:.0f} per ticket. "
-            f"Try a budget of at least "
-            f"${cheapest:.0f}."
-        )
-
-    else:
-
-        st.warning(
-            "KickSeatz loaded the database, but no inventory "
-            "has enough tickets for your requested quantity."
-        )
-
-    with st.expander(
-        "Developer Debug Information"
-    ):
-
-        st.write(
-            f"Database path: {DB_PATH}"
-        )
-
-        st.write(
-            f"Master JSON path: {MASTER_DATA_PATH}"
-        )
-
-        st.write(
-            f"Inventory rows loaded: {len(inventory)}"
-        )
-
-        st.write(
-            f"Eligible tickets: {len(eligible_tickets)}"
-        )
-
-        st.write(
-            f"Budget: ${budget}"
-        )
-
-        st.write(
-            f"Requested tickets: {ticket_count}"
-        )
-
-        st.write(
-            f"Priority: {priority}"
-        )
-
-        st.write(
-            "Loaded inventory:"
-        )
-
-        for t in inventory:
-
-            game = get_game_by_week(
-                t.get("week")
-            )
-
-            st.write(
-                f"ID {t['id']} | "
-                f"Week {t['week']} | "
-                f"Opponent: {t['opponent']} | "
-                f"Price: ${t['price']:.0f} | "
-                f"Quantity: {t['available_quantity']} | "
-                f"Game lookup: "
-                f"{'FOUND' if game else 'NOT FOUND'}"
-            )
-
-    st.stop()
-
-# ============================================================
-# TOP RECOMMENDATION
-# ============================================================
-
-recommendation = candidates[0]
-
-# A marketplace visitor can explicitly select a ticket from the interactive
-# section/ticket controls. When that happens, show that ticket as the active
-# recommendation while preserving the same scoring engine.
-selected_ticket_id = st.session_state.get("kz_selected_ticket_id")
-if selected_ticket_id is not None:
-    for _candidate in candidates:
-        if _candidate["ticket"].get("id") == selected_ticket_id:
-            recommendation = _candidate
-            break
-
-ticket = recommendation["ticket"]
-game = recommendation["game"]
-score = recommendation["score"]
-
-confidence = calculate_confidence(
-    ticket,
-    game,
-)
-
-label = {
-    "Best Overall Value":
-        "🏆 Best Overall Value",
-
-    "Lowest Price":
-        "💰 Lowest Price",
-
-    "Best Game":
-        "🔥 Best Game",
-
-    "Best Seats":
-        "💺 Best Seats",
-
-    "Custom Mix":
-        "🎯 Custom Mix",
-}[priority]
-
-st.markdown(
-    '<div class="section-title">'
-    'Your KickSeatz Recommendation'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
-st.caption("Primary recommendation first. Open **🔎 Explain this ticket** for the deeper analysis.")
-
-left, right = st.columns([3, 1])
-
-with left:
-
-    st.markdown(
-        f'<div class="badge">{label}</div>',
-        unsafe_allow_html=True,
-    )
-
-    matchup_word = "vs" if game.get("home_game") or game.get("international_game") else "at"
-
-    st.markdown(
-        f"### Atlanta Falcons {matchup_word} {game['opponent']}"
-    )
-
-    rec_falcons_logo = get_nfl_logo_url("Atlanta Falcons")
-    rec_opponent_logo = get_nfl_logo_url(game.get("opponent"))
-
-    if rec_falcons_logo and rec_opponent_logo:
-        st.markdown(
-            f"""
-            <div class="recommendation-matchup">
-                <div><img src="{rec_falcons_logo}" width="56" height="56" loading="lazy" decoding="async" alt="Atlanta Falcons logo"></div>
-                <div class="matchup-vs">VS</div>
-                <div><img src="{rec_opponent_logo}" width="56" height="56" loading="lazy" decoding="async" alt="{game.get('opponent')} logo"></div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    game_type = (
-        "Home"
-        if game.get("home_game")
-        else "Away"
-    )
-
-    details = [
-        f"**Week {game.get('week')}**",
-        f"**{game_type} game**",
-        f"📅 {game.get('game_date', 'Date unavailable')}",
-    ]
-
-    if game.get("venue"):
-        details.append(
-            f"🏟️ {game.get('venue')}"
-        )
-
-        venue_info = get_game_venue_info(game)
-        if venue_info and venue_info.get("map_status") != "interactive_demo":
-            details.append("Map baseline ready")
-
-    st.write(
-        " • ".join(details)
-    )
-
-    st.write(
-        f"💺 **Section {ticket['section']} "
-        f"• Row {ticket['row']}**"
-    )
-
-    st.write(
-        f"🎟️ {ticket['available_quantity']} "
-        f"tickets available"
-    )
-
-    st.caption(get_ticketmaster_status_text(game))
-
-    if game.get("ticketmaster_url"):
-        st.link_button(
-            "🎟️ View Event on Ticketmaster",
-            game["ticketmaster_url"],
-        )
-    else:
-        st.info(
-            "Ticketmaster event link is unavailable for this matchup."
-        )
-
-    # The in-app map is the primary experience. Venue-specific external
-    # references remain available through Ticketmaster event links when needed.
-
-    with st.expander("Ticket Details"):
-        st.write(f"Inventory Ticket ID: `{ticket.get('id')}`")
-        st.write(f"Section: **{ticket.get('section')}**")
-        st.write(f"Row: **{ticket.get('row')}**")
-        st.write(f"Available: **{ticket.get('available_quantity')}**")
-        if ticket.get("source"):
-            st.write(f"Inventory source: **{ticket.get('source')}**")
-        if ticket.get("last_updated"):
-            st.write(f"Inventory timestamp: **{get_last_updated_display(ticket.get('last_updated'))}**")
-
-    st.markdown(
-        '<div class="section-title">🗺️ Seat Map & Live Picks</div>',
-        unsafe_allow_html=True,
-    )
-
-    render_interactive_mbs_map(
-        ticket,
-        game,
-        ticket_count,
-    )
-
-    if TOP_PICKS_ENABLED:
-        live_picks, live_picks_error = load_top_picks(
-            game.get("ticketmaster_event_id"),
-            quantity=ticket_count,
-            max_price=budget,
-        )
-
-        if live_picks:
-            st.success(
-                f"Live Ticketmaster Top Picks connected • "
-                f"{len(live_picks)} pick(s) returned for your budget."
-            )
-
-            for pick_index, live_pick in enumerate(live_picks[:3], start=1):
-                pick_cols = st.columns([1.5, 1, 1, 1.1])
-
-                with pick_cols[0]:
-                    location = (
-                        f"Section {live_pick.get('section') or 'N/A'}"
-                    )
-                    if live_pick.get("row"):
-                        location += f" • Row {live_pick.get('row')}"
-
-                    st.markdown(f"**Live Pick #{pick_index}**")
-                    st.write(location)
-
-                    if live_pick.get("seats"):
-                        st.caption(
-                            "Seats: " + ", ".join(
-                                str(seat)
-                                for seat in live_pick["seats"]
-                            )
-                        )
-
-                with pick_cols[1]:
-                    st.metric(
-                        "Quality",
-                        f"{live_pick.get('quality', 0)}/100",
-                    )
-
-                with pick_cols[2]:
-                    live_price = live_pick.get("total_price")
-                    if live_price is not None:
-                        currency = live_pick.get("currency") or "USD"
-                        symbol = "$" if currency == "USD" else f"{currency} "
-                        st.metric(
-                            "Price",
-                            f"{symbol}{float(live_price):.2f}",
-                        )
-                    else:
-                        st.metric("Price", "See offer")
-
-                with pick_cols[3]:
-                    if live_pick.get("vfs_url"):
-                        st.link_button(
-                            "View From Seat",
-                            live_pick["vfs_url"],
-                            key=f"live_vfs_{pick_index}_{ticket['id']}",
-                        )
-                    elif live_pick.get("snapshot_url"):
-                        st.link_button(
-                            "Seat Preview",
-                            live_pick["snapshot_url"],
-                            key=f"live_snap_{pick_index}_{ticket['id']}",
-                        )
-
-                description_parts = [
-                    live_pick.get("area"),
-                    live_pick.get("description"),
-                    live_pick.get("offer_name"),
-                ]
-
-                description = " • ".join(
-                    str(part)
-                    for part in description_parts
-                    if part
-                )
-
-                if description:
-                    st.caption(description)
-
-                if live_pick.get("listing_details"):
-                    st.caption(
-                        str(live_pick["listing_details"])
-                    )
-        elif live_picks_error:
-            st.info(
-                f"Live seat picks are not available right now: "
-                f"{live_picks_error}"
-            )
-    else:
-        st.info(
-            "Live Ticketmaster seat picks are ready to activate when "
-            "authorized Top Picks access is enabled."
-        )
-
-with right:
-
-    st.markdown(
-        f'<div class="score-big">{score}/100</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.caption(
-        "KickSeatz Score"
-    )
-    st.metric(
-        "Confidence",
-        f"{confidence}/100",
-
-    )
-    st.caption(
-        "Based on comparable ticket inventory, price-history data, and game data."
-    )
-    st.markdown(
-        f'<div class="price-big">'
-        f'${ticket["price"]:.0f}'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.caption(
-        "per ticket"
-    )
-
-    st.write(
-        f"**${ticket['price'] * ticket_count:.0f} total**"
-    )
-
-# ============================================================
-# PRICE WATCH
-# ============================================================
-
-watch_status = get_watch_status(ticket)
-
-st.markdown(
-    '<div class="section-title">🔔 Price Watch</div>',
-    unsafe_allow_html=True,
-)
-
-watch_cols = st.columns([2, 1, 1])
-
-with watch_cols[0]:
-    default_target = max(
-        1,
-        int(round(float(ticket["price"]) - 5)),
-    )
-
-    target_price = st.number_input(
-        "Alert me when this ticket reaches",
-        min_value=1,
-        max_value=max(1, int(math.ceil(float(ticket["price"])))),
-        value=min(
-            max(1, int(math.ceil(float(ticket["price"])))),
-            default_target,
-        ),
-        step=5,
-        key=f"watch_target_{ticket['id']}",
-    )
-
-with watch_cols[1]:
-    st.write("")
-    st.write("")
-    watch_button = st.button(
-        "🔔 Watch Ticket",
-        use_container_width=True,
-        key=f"watch_button_{ticket['id']}",
-    )
-
-with watch_cols[2]:
-    st.write("")
-    st.write("")
-    remove_watch_button = st.button(
-        "Remove Watch",
-        use_container_width=True,
-        key=f"remove_watch_{ticket['id']}",
-    )
-
-if watch_button:
-    set_price_watch(
-        ticket["id"],
-        target_price,
-    )
-    st.success(
-        f"Price watch saved. KickSeatz will flag this ticket "
-        f"when the recorded price is at or below ${target_price:.0f}."
-    )
-    watch_status = get_watch_status(ticket)
-
-if remove_watch_button:
-    remove_price_watch(ticket["id"])
-    st.info("Price watch removed.")
-    watch_status = None
-
-watch_status = get_watch_status(ticket)
-
-if watch_status:
-    if watch_status["triggered"]:
-        st.success(
-            f"🚨 Price Watch Triggered — current price is "
-            f"${watch_status['current']:.0f}, at or below your "
-            f"${watch_status['target']:.0f} target."
-        )
-    else:
-        difference = watch_status["current"] - watch_status["target"]
-        st.info(
-            f"Watching this ticket. It is "
-            f"${difference:.0f} above your ${watch_status['target']:.0f} target."
-        )
-else:
-    st.caption(
-        "Price watches are stored in the local KickSeatz database. "
-        "This MVP displays alerts inside the app; it does not send email or SMS."
-    )
-
-# ============================================================
-
-# ============================================================
-# DEEP DIVE / EXPLANATIONS
-# ============================================================
-
-with st.popover("🔎 Explain this ticket", width="stretch"):
-    st.caption(
-        "Want the details? Open this to see how KickSeatz evaluated the recommendation, "
-        "including scoring, price benchmarks, historical signals, budget trade-offs, "
-        "opportunity analysis, and price history."
-    )
-
-    # BUDGET FIT
-    # ============================================================
-
-    budget_used = min(
-        ticket["price"] / budget,
-        1.0,
-    )
-
-    st.markdown(
-        '<div class="budget-box">',
-        unsafe_allow_html=True,
-    )
-
-    st.write(
-        f"**Budget usage:** "
-        f"${ticket['price']:.0f} of "
-        f"${budget:.0f} per ticket"
-    )
-
-    st.progress(
-        budget_used
-    )
-
-    st.caption(
-        f"${budget - ticket['price']:.0f} of your "
-        f"per-ticket budget remains."
-    )
-
-    st.markdown(
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-
-    # ============================================================
-    # HISTORICAL PRICE TIMING
-    # ============================================================
-
-    timing = get_price_timing_snapshot(ticket)
-
-    pt1, pt2 = st.columns(2)
-
-    with pt1:
-        st.markdown(
-            f"**{timing['label']}**"
-        )
-
-    with pt2:
-        if timing["low"] is not None:
-            st.caption(
-                f"Observed historical low: ${timing['low']:.0f}"
-            )
-
-    st.caption(
-        timing["detail"]
-    )
-
-    st.caption(
-        "Historical signal only — it describes recorded prices and does not predict future prices."
-    )
-
-    # ============================================================
-    # HISTORICAL TIMING SIGNAL
-    # ============================================================
-
-    timing_advice = get_price_timing_advice(ticket)
-
-    st.markdown(
-        '<div class="section-title">🧭 Historical Timing Signal</div>',
-        unsafe_allow_html=True,
-    )
-
-    if timing_advice["tone"] == "success":
-        st.success(f"{timing_advice['headline']} — {timing_advice['detail']}")
-    elif timing_advice["tone"] == "warning":
-        st.warning(f"{timing_advice['headline']} — {timing_advice['detail']}")
-    else:
-        st.info(f"{timing_advice['headline']} — {timing_advice['detail']}")
-
-    st.caption(
-        "This is a descriptive historical signal based only on recorded KickSeatz snapshots; it is not a buy/sell prediction."
-    )
-
-    # ============================================================
-    # OPPORTUNITY ENGINE
-    # ============================================================
-
-    recommendation_opportunity = recommendation.get("opportunity", {})
-    opportunity_candidates = sorted(
-        candidates,
-        key=lambda item: item.get("opportunity", {}).get("score", 0),
-        reverse=True,
-    )
-    best_opportunity = opportunity_candidates[0] if opportunity_candidates else recommendation
-    best_opp = best_opportunity.get("opportunity", {})
-
-    st.markdown(
-        '<div class="section-title">🔥 Opportunity Engine</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.caption(
-        "KickSeatz looks for value that a simple cheapest-ticket search can miss. "
-        "This signal compares the actual eligible market, seat value, budget efficiency, "
-        "observed price history, and current inventory. It is descriptive, not a prediction."
-    )
-
-    opp_col1, opp_col2, opp_col3, opp_col4 = st.columns(4)
-
-    with opp_col1:
-        st.metric(
-            "Opportunity Score",
-            f"{best_opp.get('score', 0)}/100",
-        )
-        st.caption(best_opp.get("label", "Market Value"))
-
-    with opp_col2:
-        st.metric(
-            "Same-Game Median",
-            f"${best_opp.get('same_game_median', float(best_opportunity['ticket']['price'])):.0f}",
-        )
-        st.caption(
-            f"Selected: ${float(best_opportunity['ticket']['price']):.0f}/ticket"
-        )
-
-    with opp_col3:
-        st.metric(
-            "Seat Value",
-            f"{best_opp.get('seat_value_score', 0)}/100",
-        )
-        st.caption("Relative seat quality per dollar")
-
-    with opp_col4:
-        st.metric(
-            "History Signal",
-            f"{best_opp.get('history_score', 0)}/100",
-        )
-        st.caption(
-            f"{best_opp.get('history', {}).get('sample_size', 0)} recorded observations"
-        )
-
-    opp_ticket = best_opportunity["ticket"]
-    opp_game = best_opportunity["game"]
-
-    if best_opportunity["ticket"]["id"] != ticket["id"]:
-        st.info(
-            f"**Hidden opportunity:** Falcons vs {opp_game.get('opponent', 'Unknown')} "
-            f"— Section {opp_ticket.get('section')} • Row {opp_ticket.get('row')} "
-            f"— ${float(opp_ticket.get('price', 0)):.0f}/ticket. "
-            f"{best_opp.get('reason', '')}"
-        )
-    else:
-        st.success(
-            f"**Your recommendation is also the strongest opportunity.** "
-            f"{best_opp.get('reason', '')}"
-        )
-
-    upgrade = get_opportunity_upgrade(recommendation, candidates)
-    if upgrade:
-        upgrade_ticket = upgrade["candidate"]["ticket"]
-        upgrade_game = upgrade["candidate"]["game"]
-        st.markdown("**What would your next dollars actually buy?**")
-        u1, u2, u3 = st.columns(3)
-        with u1:
-            st.metric(
-                "Extra Cost",
-                f"+${upgrade['extra_cost']:.0f}/ticket",
-            )
-        with u2:
-            st.metric(
-                "Seat Quality Gain",
-                f"+{upgrade['seat_gain']} points",
-            )
-        with u3:
-            st.caption(
-                f"Upgrade: Falcons vs {upgrade_game.get('opponent', 'Unknown')} "
-                f"• Sec {upgrade_ticket.get('section')} • Row {upgrade_ticket.get('row')} "
-                f"• ${float(upgrade_ticket.get('price', 0)):.0f}"
-            )
-
-    with st.container(border=True):
-        st.write(
-            f"**Relative price:** {best_opp.get('relative_price_score', 0)}/100 — "
-            "compared with the actual eligible tickets for the matchup."
-        )
-        st.write(
-            f"**Seat value:** {best_opp.get('seat_value_score', 0)}/100 — "
-            "seat quality relative to ticket price across eligible inventory."
-        )
-        st.write(
-            f"**Budget efficiency:** {best_opp.get('budget_efficiency_score', 0)}/100 — "
-            "how efficiently the ticket uses the selected per-ticket budget."
-        )
-        st.write(
-            f"**Historical signal:** {best_opp.get('history_score', 0)}/100 — "
-            "based only on recorded prices for this ticket."
-        )
-        st.write(
-            f"**Availability signal:** {best_opp.get('scarcity_score', 0)}/100 — "
-            "based on current inventory available for the requested quantity."
-        )
-
-    # ============================================================
-    # PRICE BENCHMARK + BUDGET OPPORTUNITY
-    # ============================================================
-
-    benchmark = get_price_benchmark(ticket)
-    if benchmark:
-        st.markdown(
-            '<div class="section-title">📈 Price Benchmark</div>',
-            unsafe_allow_html=True,
-        )
-
-        pb1, pb2, pb3, pb4 = st.columns(4)
-
-        with pb1:
-            st.metric("Same-game Median", f"${benchmark['median']:.0f}")
-
-        with pb2:
-            st.metric("Cheapest Available", f"${benchmark['cheapest']:.0f}")
-
-        with pb3:
-            delta_text = (
-                f"${abs(benchmark['difference']):.0f} below median"
-                if benchmark["difference"] < 0
-                else f"${benchmark['difference']:.0f} above median"
-                if benchmark["difference"] > 0
-                else "At median"
-            )
-            st.metric("Ticket Position", f"{benchmark['percentile']}%", delta_text)
-
-        with pb4:
-            st.metric("Comparable Tickets", benchmark["sample_size"])
-
-        st.caption(
-            "Benchmark uses KickSeatz's currently loaded inventory for the same matchup; "
-            "it is not a live market-wide average."
-        )
-
-    cheaper_option, upgrade_option = get_budget_insights(
-        candidates,
-        ticket,
-        budget,
-    )
-
-    if cheaper_option or upgrade_option:
-        st.markdown(
-            '<div class="section-title">💡 What Your Budget Can Change</div>',
-            unsafe_allow_html=True,
-        )
-
-        budget_cols = st.columns(2)
-
-        with budget_cols[0]:
-            if cheaper_option:
-                ct = cheaper_option["ticket"]
-                cg = cheaper_option["game"]
-                savings = float(ticket["price"]) - float(ct["price"])
-                st.success(
-                    f"Save ${savings:.0f}/ticket with Falcons vs {cg['opponent']} "
-                    f"at ${float(ct['price']):.0f}."
-                )
-                st.caption(
-                    f"Section {ct['section']} • Row {ct['row']} • "
-                    f"Score {cheaper_option['score']}/100"
-                )
-            else:
-                st.info("No cheaper eligible ticket is available in the current inventory.")
-
-        with budget_cols[1]:
-            if upgrade_option:
-                ut = upgrade_option["ticket"]
-                ug = upgrade_option["game"]
-                extra = float(ut["price"]) - float(ticket["price"])
-                st.info(
-                    f"Spend ${extra:.0f} more/ticket for Falcons vs {ug['opponent']} "
-                    f"at ${float(ut['price']):.0f}."
-                )
-                st.caption(
-                    f"Section {ut['section']} • Row {ut['row']} • "
-                    f"Score {upgrade_option['score']}/100"
-                )
-            else:
-                st.info("No higher-priced eligible upgrade is available within your budget.")
-
-    # ============================================================
-    # WHY KICKSEATZ CHOSE IT
-    # ============================================================
-
-    st.markdown(
-        '<div class="section-title">'
-        '🧠 Why KickSeatz Chose This Ticket'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
-    reasons = get_reasons(
-        ticket,
-        game,
-        budget,
-        ticket_count,
-        priority,
-    )
-
-    st.markdown(
-        '<div class="reason-card">',
-        unsafe_allow_html=True,
-    )
-
-    for reason in reasons:
-        st.markdown(
-            f"• {reason}"
-        )
-
-    st.markdown(
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    # ============================================================
-    # BEST ALTERNATIVE
-    # ============================================================
-
-    if len(candidates) >= 2:
-        alternative = candidates[1]
-        at = alternative["ticket"]
-        ag = alternative["game"]
-
-        st.markdown(
-            '<div class="section-title">🔄 Best Alternative</div>',
-            unsafe_allow_html=True,
-        )
-
-        alt1, alt2, alt3 = st.columns(3)
-        with alt1:
-            st.metric("Alternative Score", f"{alternative['score']}/100")
-        with alt2:
-            st.metric("Price", f"${float(at['price']):.0f}/ticket")
-        with alt3:
-            score_gap = alternative["score"] - score
-            st.metric("Score Difference", f"{score_gap:+.0f}")
-
-        st.write(
-            f"Falcons vs **{ag['opponent']}** • Section **{at['section']}** • "
-            f"Row **{at['row']}** • {at['available_quantity']} available"
-        )
-        st.caption(
-            "This is the next option in the same recommendation model, not a separate opinion."
-        )
-
-    # ============================================================
-    # SCORE BREAKDOWN
-    # ============================================================
-
-    breakdown = {
-        "Game Quality":
-            calculate_game_score(game),
-
-        "Price":
-            calculate_price_score(
-                ticket["price"],
-                [
-                    float(t.get("price", 0))
-                    for t in inventory
-                    if normalize_week(t.get("week"))
-                    == normalize_week(ticket.get("week"))
-                    and int(t.get("available_quantity", 0)) > 0
-                ]
-            ),
-
-        "Seat Quality":
-            calculate_seat_quality(ticket) * 10,
-
-        "Availability":
-            calculate_availability(
-                ticket,
-                ticket_count,
-            ),
-
-        "Confidence":
-            confidence,
-    }
-
-    st.write("")
-
-    b1, b2, b3, b4, b5 = st.columns(5)
-
-    with b1:
-        st.metric(
-            "Game Quality",
-            f"{breakdown['Game Quality']}/100",
-        )
-
-        opponent = game.get(
-            "opponent",
-            ""
-        )
-
-        opponent_rank = OPPONENT_POWER_RANKINGS.get(
-            opponent,
-            32,
-        )
-
-        game_notes = []
-
-        game_notes.append(
-            f"{opponent} is ranked #{opponent_rank}."
-        )
-
-        if game.get("home_game"):
-            game_notes.append(
-                "Home-game advantage included."
-            )
-
-        if opponent in DIVISION_RIVALS:
-            game_notes.append(
-                "Division-rival bonus included."
-            )
-
-        st.caption(
-            " ".join(game_notes)
-        )
-
-    with b2:
-        st.metric(
-            "Price Score",
-            f"{breakdown['Price']}/100",
-        )
-
-        comparable_prices = [
-            float(t.get("price", 0))
-            for t in inventory
-            if normalize_week(t.get("week"))
-            == normalize_week(ticket.get("week"))
-            and int(t.get("available_quantity", 0)) > 0
-        ]
-
-        if comparable_prices:
-            cheaper_count = sum(
-                1
-                for p in comparable_prices
-                if p >= float(ticket["price"])
-            )
-
-            price_percentile = round(
-                (cheaper_count / len(comparable_prices)) * 100
-            )
-
-            st.caption(
-                f"${ticket['price']:.0f} is cheaper than "
-                f"{price_percentile}% of comparable available tickets."
-            )
-
-    with b3:
-        st.metric(
-            "Seat Quality",
-            f"{breakdown['Seat Quality']}/100",
-        )
-
-        section = str(
-            ticket.get("section", "")
-        )
-
-        row = str(
-            ticket.get("row", "")
-        )
-
-        seat_notes = []
-
-        try:
-            section_number = int(
-                "".join(
-                    c for c in section
-                    if c.isdigit()
-                )
-            )
-
-            if 101 <= section_number <= 134:
-                seat_notes.append(
-                    "Lower-bowl section."
-                )
-
-        except ValueError:
-            pass
-
-        try:
-            row_number = int(
-                "".join(
-                    c for c in row
-                    if c.isdigit()
-                )
-            )
-
-            if row_number <= 5:
-                seat_notes.append(
-                    "Excellent row position."
-                )
-
-            elif row_number <= 10:
-                seat_notes.append(
-                    "Good row position."
-                )
-
-        except ValueError:
-            pass
-
-        if not seat_notes:
-            seat_notes.append(
-                "Standard seat-quality rating based on section and row."
-            )
-
-        st.caption(
-            " ".join(seat_notes)
-        )
-
-    with b4:
-        st.metric(
-            "Availability",
-            f"{breakdown['Availability']}/100",
-        )
-
-        available = int(
-            ticket.get(
-                "available_quantity",
-                0,
-            )
-        )
-
-        if available >= ticket_count:
-            st.caption(
-                f"{available} tickets available — "
-                f"enough for your group."
-            )
-        else:
-            st.caption(
-                "Not enough tickets available "
-                "for your requested quantity."
-            )
-
-    with b5:
-        st.metric(
-            "Confidence",
-            f"{breakdown['Confidence']}/100",
-        )
-
-        if confidence >= 85:
-            confidence_note = (
-                "High confidence — strong data coverage."
-            )
-
-        elif confidence >= 70:
-            confidence_note = (
-                "Good confidence — enough data for a solid comparison."
-            )
-
-        elif confidence >= 50:
-            confidence_note = (
-                "Moderate confidence — more data would improve reliability."
-            )
-
-        else:
-            confidence_note = (
-                "Low confidence — limited comparison or history data."
-            )
-
-        st.caption(
-            confidence_note
-        )
-
-    # ============================================================
-    # PRICE HISTORY
-    # ============================================================
-
-    st.markdown(
-        '<div class="section-title">'
-        '📉 Price History'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
-    history_conn = sqlite3.connect(DB_PATH)
-
-    try:
-        history_rows = history_conn.execute(
-            """
-            SELECT price, recorded_at
-            FROM price_history
-            WHERE ticket_id = ?
-            ORDER BY recorded_at
-            """,
-            (ticket["id"],),
-        ).fetchall()
-
-    finally:
-        history_conn.close()
-
-    if history_rows:
-
-        history_prices = [
-            float(row[0])
-            for row in history_rows
-        ]
-
-        starting_price = history_prices[0]
-        current_price = history_prices[-1]
-        price_change = current_price - starting_price
-
-        if starting_price > 0:
-            percent_change = (
-                price_change / starting_price
-            ) * 100
-        else:
-            percent_change = 0
-
-        h1, h2, h3, h4 = st.columns(4)
-
-        with h1:
-            st.metric(
-                "Starting Price",
-                f"${starting_price:.0f}",
-            )
-
-        with h2:
-            st.metric(
-                "Current Price",
-                f"${current_price:.0f}",
-            )
-
-        with h3:
-            st.metric(
-                "Price Change",
-                f"${price_change:+.0f}",
-            )
-
-        with h4:
-            st.metric(
-                "% Change",
-                f"{percent_change:+.1f}%",
-            )
-
-        st.line_chart(
-            {
-                "Ticket Price": history_prices
-            }
-        )
-
-        if len(history_prices) >= 2:
-
-            previous_price = history_prices[-2]
-            current_price = history_prices[-1]
-
-            price_change = (
-                current_price - previous_price
-            )
-
-            if previous_price > 0:
-                percent_change = (
-                    price_change / previous_price
-                ) * 100
-            else:
-                percent_change = 0
-
-            if percent_change <= -10:
-
-                st.success(
-                    f"🚨 Price Drop Alert — "
-                    f"${abs(price_change):.0f} cheaper "
-                    f"({abs(percent_change):.1f}% drop) "
-                    f"than the previous recorded price."
-                )
-
-            elif price_change < 0:
-
-                st.info(
-                    f"Price dropped ${abs(price_change):.0f} "
-                    f"({abs(percent_change):.1f}%) "
-                    f"from the previous snapshot."
-                )
-
-            elif price_change > 0:
-
-                st.warning(
-                    f"Price increased ${price_change:.0f} "
-                    f"({percent_change:.1f}%) "
-                    f"from the previous snapshot."
-                )
-
-            else:
-
-                st.info(
-                    "The ticket price has not changed "
-                    "since the previous snapshot."
-                )
-
-        else:
-
-            st.info(
-                "Only one price snapshot has been recorded so far."
-            )
-
-        st.caption(
-            f"{len(history_rows)} price snapshot(s) recorded."
-        )
-
-    else:
-
-        st.info(
-            "No price history has been recorded for this ticket yet."
-        )
-
-
-    # ============================================================
-
-# TOP 3 COMPARISON
-# ============================================================
-
-st.markdown(
-    '<div class="section-title">'
-    '📊 Compare Your Top Options'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
-interactive_options = select_interactive_ticket_options(
-    candidates,
-    limit=4,
-)
-
-top_options = interactive_options[1:4]
-
-if interactive_options:
-    st.caption(
-        "These options come directly from the loaded ticket inventory. "
-        "When no single game is selected, KickSeatz spreads the visible "
-        "options across different matchups so you can compare games as well "
-        "as seats."
-    )
-
-compare_cols = st.columns(
-    len(top_options)
-)
-
-for i, (col, option) in enumerate(
-    zip(compare_cols, top_options),
-    start=1,
-):
-
-    option_ticket = option["ticket"]
-    option_game = option["game"]
-
-    with col:
-
-        st.markdown(
-            '<div class="compare-card">',
-            unsafe_allow_html=True,
-        )
-
-        st.markdown(
-            f'<div class="compare-rank">'
-            f'#{i} Option'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-        matchup_word = "vs" if option_game.get("home_game") or option_game.get("international_game") else "at"
-        st.markdown(
-            f"**Falcons {matchup_word} {option_game['opponent']}**"
-        )
-
-        st.markdown(
-            f"💺 Section {option_ticket['section']} "
-            f"• Row {option_ticket['row']}"
-        )
-        st.caption(
-            f"🏟️ {option_game.get('venue', 'Venue TBD')}"
-        )
-
-        st.markdown(
-            f"### ${option_ticket['price']:.0f}/ticket"
-        )
-        st.caption(
-            f"${float(option_ticket['price']) * ticket_count:.0f} total for {ticket_count} ticket(s)"
-        )
-
-        if option_game.get("ticketmaster_url"):
-            st.link_button(
-                "View Ticketmaster Event",
-                option_game["ticketmaster_url"],
-                key=f"top3_tm_{i}_{option_ticket['id']}",
-            )
-
-        st.markdown(
-            f'<div class="compare-score">'
-            f'{option["score"]}/100'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-        st.caption(
-            f"Game "
-            f"{calculate_game_score(option_game)}/100 • "
-            f"Seat "
-            f"{calculate_seat_quality(option_ticket) * 10}/100"
-        )
-
-        st.markdown(
-            "</div>",
-            unsafe_allow_html=True,
-        )
-
-# ============================================================
-# OTHER OPTIONS
-# ============================================================
-
-if len(candidates) > 3:
-
-    with st.expander(
-        f"See all {len(candidates)} eligible options"
-    ):
-
-        for i, option in enumerate(
-            candidates[3:],
-            start=4,
-        ):
-
-            t = option["ticket"]
-            g = option["game"]
-
-            st.write(
-                f"**#{i} Falcons vs {g['opponent']}** — "
-                f"Section {t['section']}, "
-                f"Row {t['row']} — "
-                f"${t['price']:.0f}/ticket — "
-                f"Score {option['score']}/100"
-            )
-
-# ============================================================
-# EXPORT RESULTS
-# ============================================================
-
-if candidates:
-    st.markdown(
-        '<div class="section-title">⬇️ Save Your Results</div>',
-        unsafe_allow_html=True,
-    )
-    st.download_button(
-        "Download Top Matches as CSV",
-        data=build_candidate_csv(candidates),
-        file_name="kickseatz_recommendations.csv",
-        mime="text/csv",
-    )
-    st.caption(
-        "Exports up to 15 currently eligible matches using the active budget, ticket count, game filter, and priority."
-    )
-
-# ============================================================
-# RATE MY TICKET + DEAL ANALYSIS
-# ============================================================
-
-st.markdown(
-    '<div class="section-title">'
-    '🎟️ Rate My Ticket'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
-st.caption(
-    "Already found a ticket? KickSeatz evaluates its "
-    "value independently of your search budget."
-)
-
-rate_mode = st.radio(
-    "What do you want to rate?",
-    [
-        "KickSeatz sample ticket",
-        "My purchased ticket",
-    ],
-    horizontal=True,
-    key="rate_ticket_mode",
-)
-
-rate_is_purchased = rate_mode == "My purchased ticket"
-
-# Keep this defined in both modes because the existing Compare Tickets
-# section uses it later in the page.
-rate_options = []
-
-if rate_is_purchased:
-    purchased_games = get_game_selector_options()
-
-    purchased_labels = [
-        f"Week {g.get('week')} • "
-        f"Falcons {'vs' if g.get('home_game') or g.get('international_game') else 'at'} "
-        f"{g.get('opponent')} • "
-        f"{g.get('venue', 'Venue TBD')}"
-        for g in purchased_games
-    ]
-
-    pg1, pg2 = st.columns(2)
-
-    with pg1:
-        purchased_game_label = st.selectbox(
-            "Which game is your ticket for?",
-            purchased_labels,
-            key="purchased_ticket_game",
-        )
-
-        purchased_game_index = purchased_labels.index(
-            purchased_game_label
-        )
-        rg = purchased_games[purchased_game_index]
-
-        purchased_price = st.number_input(
-            "What did you pay per ticket?",
-            min_value=1.0,
-            max_value=5000.0,
-            value=100.0,
-            step=5.0,
-            key="purchased_ticket_price",
-        )
-
-    with pg2:
-        purchased_section = st.text_input(
-            "Section",
-            value="123",
-            key="purchased_ticket_section",
-        )
-
-        purchased_row = st.text_input(
-            "Row",
-            value="10",
-            key="purchased_ticket_row",
-        )
-
-    rt = {
-        "id": "USER_PURCHASED_TICKET",
-        "week": rg.get("week"),
-        "opponent": rg.get("opponent"),
-        "game_date": rg.get("game_date"),
-        "section": purchased_section.strip() or "Not provided",
-        "row": purchased_row.strip() or "Not provided",
-        "price": float(purchased_price),
-        "available_quantity": 1,
-        "source": "User-entered purchased ticket",
-        "last_updated": None,
-    }
-
-    st.info(
-        "Purchased-ticket mode compares the price and seat quality with KickSeatz's "
-        "comparison data. Availability is excluded because you already own the ticket."
-    )
-
-    rating = rate_ticket(
-        rt,
-        rg,
-        purchased=True,
-    )
-
-else:
-    for t in inventory:
-        g = get_game_by_week(
-            t.get("week")
-        )
-
-        if g:
-            rate_options.append(
-                (t, g)
-            )
-
-    if rate_options:
-        labels = [
-            f"${t['price']:.0f} • "
-            f"Falcons {'vs' if g.get('home_game') or g.get('international_game') else 'at'} {g['opponent']} • "
-            f"Section {t['section']} "
-            f"Row {t['row']}"
-            for t, g in rate_options
-        ]
-
-        selected_label = st.selectbox(
-            "Select a KickSeatz sample ticket to rate",
-            labels,
-            key="rate_ticket_select",
-        )
-
-        idx = labels.index(
-            selected_label
-        )
-
-        rt, rg = rate_options[idx]
-
-        rating = rate_ticket(
-            rt,
-            rg,
-        )
-
-    deal_title, deal_text = get_deal_assessment(
-        rating
-    )
-
-    st.markdown(
-        '<div class="rate-card">',
-        unsafe_allow_html=True,
-    )
-
-    left, right = st.columns([3, 1])
-
-    with left:
-
-        st.markdown(
-            f'<div class="deal-badge">'
-            f'{rating["verdict"]}'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-        st.markdown(
-            f"### Falcons vs {rg['opponent']}"
-        )
-
-        st.write(
-            f"📅 {rg.get('game_date', 'Date unavailable')} "
-            f"• 💺 Section {rt['section']} "
-            f"• Row {rt['row']}"
-        )
-
-        if rate_is_purchased:
-            st.write(
-                f"💵 ${rt['price']:.0f}/ticket "
-                f"• 🧾 User-entered purchased ticket"
-            )
-        else:
-            st.write(
-                f"💵 ${rt['price']:.0f}/ticket "
-                f"• 🎟️ {rt['available_quantity']} available"
-            )
-
-    with right:
-
-        st.markdown(
-            f'<div class="rate-score">'
-            f'{rating["score"]}/100'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-        st.caption(
-            "KickSeatz Ticket Rating"
-        )
-
-    st.markdown(
-        f'<div class="deal-answer">'
-        f'<b>Is this a good deal?</b><br>'
-        f'<b>{deal_title}.</b> {deal_text}'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        "**Rating Breakdown**"
-    )
-
-    a, b, c, d = st.columns(4)
-
-    for col, name, key in [
-        (a, "Game", "game"),
-        (b, "Price", "price"),
-        (c, "Seat", "seat"),
-        (d, "Availability", "availability"),
-    ]:
-
-        with col:
-
-            st.metric(
-                name,
-                f"{rating[key]}/100",
-            )
-
-            if key == "game":
-
-                opponent = rg.get(
-                    "opponent",
-                    ""
-                )
-
-                opponent_rank = OPPONENT_POWER_RANKINGS.get(
-                    opponent,
-                    32,
-                )
-
-                st.caption(
-                    f"{opponent} is ranked #{opponent_rank}. "
-                    "Source: NFL.com Week 1 Power Rankings (2026)."
-                )
-
-            elif key == "price":
-
-                st.caption(
-                    "Compared with available tickets for the same matchup."
-                )
-
-            elif key == "seat":
-
-                st.caption(
-                    f"Section {rt['section']} • "
-                    f"Row {rt['row']}."
-                )
-
-            elif key == "availability":
-
-                if rate_is_purchased:
-                    st.caption(
-                        "Availability is excluded for a ticket you already own."
-                    )
-                else:
-                    st.caption(
-                        f"{rt['available_quantity']} tickets available."
-                    )
-
-    st.markdown(
-        "**Why this rating?**"
-    )
-
-    for reason in get_rate_reasons(
-        rt,
-        rg,
-        rating,
-    ):
-
-        st.markdown(
-            f"• {reason}"
-        )
-
-    st.caption(
-        "This rating does not use your search budget."
-    )
-
-    st.markdown(
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-# ============================================================
-# COMPARE TICKETS
-# ============================================================
-
-st.markdown(
-    '<div class="section-title">'
-    '⚖️ Compare Tickets'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
-st.caption(
-    "Put up to three tickets head-to-head and let "
-    "KickSeatz identify the strongest value."
-)
-
-if len(rate_options) >= 2:
-
-    compare_labels = [
-        f"${t['price']:.0f} • "
-        f"{g['opponent']} • "
-        f"Sec {t['section']} Row {t['row']}"
-        for t, g in rate_options
-    ]
-
-    selected = st.multiselect(
-        "Choose 2–3 tickets",
-        compare_labels,
-        default=compare_labels[:3],
-        max_selections=3,
-        key="compare_tickets_select",
-    )
-
-    data = []
-
-    for label in selected:
-
-        i = compare_labels.index(
-            label
-        )
-
-        t, g = rate_options[i]
-
-        data.append(
-            (
-                t,
-                g,
-                rate_ticket(t, g),
-            )
-        )
-
-    if len(data) >= 2:
-
-        winner = max(
-            data,
-            key=lambda x: x[2]["score"],
-        )
-
-        cols = st.columns(
-            len(data)
-        )
-
-        for i, (col, (t, g, r)) in enumerate(
-            zip(cols, data),
-            1,
-        ):
-
-            with col:
-
-                st.markdown(
-                    '<div class="compare-card">',
-                    unsafe_allow_html=True,
-                )
-
-                rank_text = (
-                    "🏆 Best Value"
-                    if t["id"] == winner[0]["id"]
-                    else f"Option {i}"
-                )
-
-                st.markdown(
-                    f'<div class="compare-rank">'
-                    f'{rank_text}'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-                st.markdown(
-                    f"**Falcons vs {g['opponent']}**"
-                )
-
-                st.write(
-                    f"💺 Section {t['section']} "
-                    f"• Row {t['row']}"
-                )
-
-                st.markdown(
-                    f"### ${t['price']:.0f}/ticket"
-                )
-
-                st.markdown(
-                    f'<div class="compare-score">'
-                    f'{r["score"]}/100'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-                st.caption(
-                    f"Game: {r['game']}/100"
-                )
-
-                st.caption(
-                    f"Price: {r['price']}/100 — "
-                    "compared with available tickets."
-                )
-
-                st.caption(
-                    f"Seat: {r['seat']}/100 — "
-                    "based on section and row."
-                )
-
-                st.caption(
-                    f"Availability: {r['availability']}/100 — "
-                    f"{t['available_quantity']} tickets available."
-                )
-
-                compare_confidence = calculate_confidence(
-                    t,
-                    g,
-                )
-
-                st.caption(
-                    f"Confidence: {compare_confidence}/100 — "
-                    "based on comparison and history data."
-                )
-
-                st.markdown(
-                    "</div>",
-                    unsafe_allow_html=True,
-                )
-
-        st.success(
-            f"KickSeatz's strongest value is "
-            f"Falcons vs {winner[1]['opponent']} "
-            f"at ${winner[0]['price']:.0f}/ticket "
-            f"({winner[2]['score']}/100)."
-        )
-
-    else:
-
-        st.info(
-            "Select at least two tickets to compare them."
-        )
-
-st.caption(
-    "Core MVP features: Find My Game • Find Tickets • My Tickets • Scoring • Price Watch • "
-    "Interactive Seat Map • Explain Why • Ticket Comparison • CSV Export"
-)
-
-
-# ============================================================
-# TICKETMASTER PARTNER ACCESS STATUS
-# ============================================================
-
-st.markdown(
-    '<div class="section-title">🔗 Live Ticketing Access</div>',
-    unsafe_allow_html=True,
-)
-
-if TOP_PICKS_ENABLED:
-    st.success(
-        "Ticketmaster Top Picks integration is enabled. "
-        "KickSeatz will request live seat recommendations for supported events."
-    )
-elif TICKETMASTER_API_KEY and ticketmaster_events:
-    st.success(
-        "Ticketmaster event discovery is connected. Event metadata and event links are being used by KickSeatz."
-    )
-    st.info(
-        "Live seat-level Top Picks integration is built into the app but remains disabled "
-        "until authorized Top Picks access is enabled."
-    )
-else:
-    st.info(
-        "KickSeatz is running in local/demo inventory mode for seat-level ticket selection. "
-        "Live Top Picks access can be enabled without changing the core recommendation system."
-    )
-
-st.caption(
-    "The app uses live event metadata now; live seat-level inventory depends on authorized Ticketmaster partner access."
-)
-
-# ============================================================
-# DATA FRESHNESS
-# ============================================================
-
-st.markdown(
-    '<div class="section-title">🕒 Data Freshness</div>',
-    unsafe_allow_html=True,
-)
-
-freshness = get_data_freshness()
-fresh_col1, fresh_col2, fresh_col3 = st.columns(3)
-
-with fresh_col1:
-    if freshness:
-        st.metric(
-            "Inventory Data",
-            freshness.strftime("%b %d, %Y"),
-        )
-        st.caption(
-            freshness.strftime("Last detected update: %I:%M %p")
-        )
-    else:
-        st.metric("Inventory Data", "Timestamp unavailable")
-        st.caption("The database does not expose a usable update timestamp.")
-
-with fresh_col2:
-    st.metric("Ticketmaster Metadata", "≤ 5 min cache")
-    st.caption(
-        "Event discovery is cached for performance and may be slightly older than a live request."
-    )
-
-with fresh_col3:
-    st.metric(
-        "Live Seat Inventory",
-        "Enabled" if TOP_PICKS_ENABLED else "Pending access",
-    )
-    st.caption(
-        "Live Top Picks is enabled." if TOP_PICKS_ENABLED
-        else "Seat-level inventory will use authorized partner access when available."
-    )
-
-# ============================================================
-# DATA NOTICE
-# ============================================================
-
-st.divider()
-
-st.caption(
-    "KickSeatz MVP • NFL 2026 season"
-)
-
-st.caption(
-    "Ticket inventory shown in this MVP is demonstration "
-    "inventory. Game and event data is sourced from the "
-    "NFL schedule and Ticketmaster event data; live "
-    "seat-level inventory requires authorized "
-    "ticketing-partner access."
-)
-
-# ============================================================
-# DEBUG
-# ============================================================
-
-show_debug = st.sidebar.checkbox(
-    "Developer mode",
-    value=False,
-    help="Show database paths and technical diagnostics."
-)
-
-if show_debug:
-    with st.expander(
-        "Developer Debug Information"
-    ):
-
-        st.write(
-            f"Database path: {DB_PATH}"
-        )
-
-        st.write(
-            f"Master JSON path: {MASTER_DATA_PATH}"
-        )
-
-        st.write(
-            f"Inventory rows loaded: {len(inventory)}"
-        )
-
-        st.write(
-            f"Budget: ${budget}"
-        )
-
-        st.write(
-            f"Requested tickets: {ticket_count}"
-        )
-
-        st.write(
-            f"Priority: {priority}"
-        )
-
-        st.write(
-            f"Eligible tickets: {len(eligible_tickets)}"
-        )
-
-        st.write(
-            f"Seat area filter: {seat_area_filter}"
-        )
-
-        st.write(
-            f"Minimum seat quality: {min_seat_quality}"
-        )
-
-        st.write(
-            f"Division rivals only: {rivals_only}"
-        )
-
-        if priority == "Custom Mix":
-            st.write(
-                f"Custom weights: {WEIGHTS['Custom Mix']}"
-            )
-
-        st.write(
-            f"Recommended ticket ID: {ticket['id']}"
-        )
-
-        st.write(
-            f"Recommended score: {score}"
-        )
-
-        st.write(
-            "Loaded inventory:"
-        )
-
-        for t in inventory:
-
-            game = get_game_by_week(
-                t.get("week")
-            )
-
-            st.write(
-                f"ID {t['id']} | "
-                f"Week {t['week']} | "
-                f"Opponent: {t['opponent']} | "
-                f"Section {t['section']} "
-                f"Row {t['row']} | "
-                f"${t['price']:.0f} | "
-                f"{t['available_quantity']} available | "
-                f"Game lookup: "
-                f"{'FOUND' if game else 'NOT FOUND'}"
-            )
