@@ -4953,6 +4953,125 @@ if len(candidates) > 3:
             )
 
 # ============================================================
+# BROWSE LOADED TICKET INVENTORY
+# ============================================================
+
+st.markdown(
+    '<div class="section-title">🎟️ Browse Ticket Inventory</div>',
+    unsafe_allow_html=True,
+)
+
+st.caption(
+    "These records come from the KickSeatz inventory database. "
+    "Demo prices and quantities are baseline data until live Ticketmaster "
+    "seat-level inventory is connected."
+)
+
+inventory_view = []
+
+for t in inventory:
+    week_value = normalize_week(t.get("week"))
+    game = get_game_by_week(week_value)
+
+    opponent = t.get("opponent", "Unknown")
+    game_date = t.get("game_date", "Date unavailable")
+
+    if game:
+        opponent = game.get("opponent", opponent)
+        game_date = game.get("game_date", game_date)
+
+    inventory_view.append(
+        {
+            "Week": f"Week {week_value}" if week_value is not None else "N/A",
+            "Opponent": opponent,
+            "Game Date": game_date or "TBD",
+            "Section": str(t.get("section", "N/A")),
+            "Row": str(t.get("row", "N/A")),
+            "Price / Ticket": f"${float(t.get('price', 0)):.0f}",
+            "Available": int(t.get("available_quantity", 0)),
+        }
+    )
+
+if inventory_view:
+
+    total_loaded = len(inventory_view)
+    unique_games = len({
+        (
+            row["Week"],
+            row["Opponent"],
+        )
+        for row in inventory_view
+    })
+
+    iv1, iv2 = st.columns(2)
+
+    with iv1:
+        st.metric(
+            "Loaded Ticket Records",
+            total_loaded,
+        )
+
+    with iv2:
+        st.metric(
+            "Games With Inventory",
+            unique_games,
+        )
+
+    # Give every populated game representation in the sample, rather than
+    # showing four tickets from the same matchup.
+    sample_rows = []
+    seen_games = set()
+
+    for row in inventory_view:
+        game_key = (
+            row["Week"],
+            row["Opponent"],
+        )
+
+        if game_key not in seen_games:
+            sample_rows.append(row)
+            seen_games.add(game_key)
+
+    # Add additional examples until the table reaches 16 rows.
+    for row in inventory_view:
+        if len(sample_rows) >= 16:
+            break
+        if row not in sample_rows:
+            sample_rows.append(row)
+
+    st.markdown("**Sample tickets across populated games**")
+
+    st.dataframe(
+        sample_rows,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Price / Ticket": st.column_config.TextColumn(
+                "Price / Ticket",
+            ),
+            "Available": st.column_config.NumberColumn(
+                "Available",
+                format="%d",
+            ),
+        },
+    )
+
+    with st.expander(
+        f"View all {total_loaded} loaded ticket records"
+    ):
+        st.dataframe(
+            inventory_view,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+else:
+    st.info(
+        "No ticket inventory records are loaded yet."
+    )
+
+
+# ============================================================
 # EXPORT RESULTS
 # ============================================================
 
